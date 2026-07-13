@@ -114,6 +114,12 @@
     white-space: nowrap;
   }
   .status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--warn); flex-shrink: 0; }
+  .status-chip.is-live {
+    background: color-mix(in srgb, var(--success) 16%, transparent);
+    color: var(--success);
+    border-color: color-mix(in srgb, var(--success) 35%, transparent);
+  }
+  .status-chip.is-live .status-dot { background: var(--success); }
 
   /* ---------- Rail ---------- */
   .rail {
@@ -327,14 +333,27 @@
     background: var(--surface-2); border: 1px solid var(--border);
     color: var(--ink-faint);
   }
-  .paper-title { font-size: 13.5px; font-weight: 700; margin: 0 0 3px; color: var(--ink-faint); font-style: italic; }
+  .paper-title { font-size: 13.5px; font-weight: 700; margin: 0 0 3px; color: var(--ink); line-height: 1.4; }
   .paper-sub { font-size: 12px; color: var(--ink-faint); margin: 0 0 10px; }
   .paper-abstract {
-    font-size: 12px; color: var(--ink-faint);
-    border-left: 3px solid var(--border);
+    font-size: 12px; color: var(--ink-soft);
+    border-left: 3px solid var(--accent);
     padding: 8px 12px; border-radius: 0 6px 6px 0;
     background: var(--surface-2);
   }
+  .results-toolbar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 18px; border-bottom: 1px solid var(--border);
+    font-size: 12px; color: var(--ink-soft);
+  }
+  .results-toolbar b { color: var(--accent-strong); }
+  button.export {
+    all: unset; cursor: pointer;
+    font-family: var(--font-mono); font-size: 11.5px; font-weight: 700;
+    padding: 6px 11px; border-radius: 7px;
+    background: var(--success); color: #fff;
+  }
+  button.export:hover { filter: brightness(0.95); }
 
   a.textlink { color: var(--accent); text-decoration: none; font-weight: 600; }
   a.textlink:hover { text-decoration: underline; }
@@ -354,7 +373,7 @@
         <p>PUBMED E-UTILITIES · SEARCH INTERFACE</p>
       </div>
     </div>
-    <span class="status-chip"><span class="status-dot"></span>OFFLINE PREVIEW</span>
+    <span class="status-chip" id="statusChip"><span class="status-dot" id="statusDot"></span><span id="statusLabel">OFFLINE</span></span>
   </div>
 
   <aside class="rail">
@@ -391,9 +410,9 @@
 
     <div class="rail-note">
       <p class="rail-section-label">연결 상태</p>
-      <div class="endpoint-row"><span>Frontend</span><b>artifact preview</b></div>
-      <div class="endpoint-row"><span>API</span><b>/api/search</b></div>
-      <div class="endpoint-row"><span>Backend</span><b style="color:var(--warn)">연결 안 됨</b></div>
+      <div class="endpoint-row"><span>Frontend</span><b>local file</b></div>
+      <div class="endpoint-row"><span>API</span><b id="apiBaseLabel">http://localhost:5000</b></div>
+      <div class="endpoint-row"><span>Backend</span><b id="backendStatus" style="color:var(--warn)">확인 중</b></div>
     </div>
   </aside>
 
@@ -428,8 +447,19 @@
     var roQuery = document.getElementById('roQuery');
     var roCount = document.getElementById('roCount');
     var roState = document.getElementById('roState');
+    var statusChip = document.getElementById('statusChip');
+    var statusLabel = document.getElementById('statusLabel');
+    var backendStatus = document.getElementById('backendStatus');
 
+    var API_BASE = 'http://localhost:5000';
     var maxResults = 10;
+
+    function setLive(isLive) {
+      statusChip.classList.toggle('is-live', isLive);
+      statusLabel.textContent = isLive ? 'LIVE' : 'OFFLINE';
+      backendStatus.textContent = isLive ? '연결됨' : '연결 안 됨';
+      backendStatus.style.color = isLive ? 'var(--success)' : 'var(--warn)';
+    }
 
     document.getElementById('dec').addEventListener('click', function () {
       maxResults = Math.max(5, maxResults - 5);
@@ -489,24 +519,65 @@
         '</div>';
     }
 
-    function renderOffline(q) {
+    function renderOffline() {
       roState.textContent = 'offline';
       content.innerHTML =
         '<div class="notice">' +
           '<div class="glyph">&#9888;</div>' +
           '<div>' +
-            '<h3>이 미리보기는 백엔드에 연결되어 있지 않습니다</h3>' +
-            '<p>Artifact 미리보기 창은 외부 네트워크 요청이 차단되어 있어 실제 PubMed 검색 결과를 불러올 수 없습니다. 대시보드의 레이아웃과 동작을 확인하는 용도로만 사용해 주세요.</p>' +
-            '<p>실제 검색 결과를 보려면 로컬에서 아래 두 프로세스를 함께 실행하세요.</p>' +
-            '<code class="block">pip install -r requirements.txt &amp;&amp; python server.py   # 백엔드, :5000\nnpm install &amp;&amp; npm run dev                          # 프런트엔드, :5173</code>' +
+            '<h3>백엔드(server.py)에 연결할 수 없습니다</h3>' +
+            '<p>이 화면은 <code>' + API_BASE + '</code> 로 실제 PubMed 검색을 요청합니다. 아래 명령으로 백엔드를 먼저 실행한 뒤 다시 검색해 주세요.</p>' +
+            '<code class="block">pip install -r requirements.txt\npython server.py   # http://localhost:5000 에서 대기</code>' +
           '</div>' +
         '</div>' +
         skeletonLayoutHTML();
     }
 
+    function renderResults(papers, q) {
+      roState.textContent = 'success';
+      if (papers.length === 0) {
+        content.innerHTML =
+          '<div class="panel"><div class="empty-state">' +
+            '<div class="glyph">&#8981;</div>' +
+            '<p class="lead">입력하신 키워드와 매칭되는 논문을 찾지 못했습니다.</p>' +
+            '<p class="sub">다른 키워드로 검색해 보세요.</p>' +
+          '</div></div>';
+        return;
+      }
+
+      var cards = papers.map(function (p, idx) {
+        var meta = '<span class="tag">No. ' + (idx + 1) + '</span>';
+        if (p.journal) meta += '<span class="tag">' + escapeHtml(p.journal) + (p.pubdate ? ' · ' + escapeHtml(p.pubdate) : '') + '</span>';
+        var link = p.url ? '<a class="textlink" href="' + escapeHtml(p.url) + '" target="_blank" rel="noreferrer">PubMed에서 보기 &#8599;</a>' : '';
+        var abstract = p.abstract ? '<div class="paper-abstract">' + escapeHtml(p.abstract) + '</div>' : '';
+        return (
+          '<div class="paper-card">' +
+            '<div class="paper-meta">' + meta + link + '</div>' +
+            '<p class="paper-title">' + escapeHtml(p.title || '(제목 없음)') + '</p>' +
+            '<p class="paper-sub">' + escapeHtml(p.authors || '') + '</p>' +
+            abstract +
+          '</div>'
+        );
+      }).join('');
+
+      content.innerHTML =
+        '<div class="panel">' +
+          '<div class="results-toolbar">' +
+            '<span>총 <b>' + papers.length + '</b>개의 논문이 PubMed에서 조회되었습니다.</span>' +
+            '<button class="export" id="exportBtn" type="button">엑셀로 내보내기</button>' +
+          '</div>' +
+          '<div class="card-list">' + cards + '</div>' +
+        '</div>';
+
+      document.getElementById('exportBtn').addEventListener('click', function () {
+        var params = new URLSearchParams({ keyword: q, max: String(maxResults) });
+        window.open(API_BASE + '/api/export?' + params.toString(), '_blank');
+      });
+    }
+
     function escapeHtml(s) {
       var d = document.createElement('div');
-      d.textContent = s;
+      d.textContent = s == null ? '' : s;
       return d.innerHTML;
     }
 
@@ -514,7 +585,7 @@
       var q = kwInput.value.trim() || 'lithium battery electrolyte additive SEI';
       roQuery.textContent = q;
       roQuery.classList.remove('dim');
-      roCount.textContent = '&mdash;';
+      roCount.textContent = '—';
 
       searchBtn.setAttribute('disabled', 'true');
       btnIcon.textContent = '↻';
@@ -522,19 +593,22 @@
       renderLoading(q);
 
       var params = new URLSearchParams({ keyword: q, max: String(maxResults) });
-      fetch('/api/search?' + params.toString())
+      fetch(API_BASE + '/api/search?' + params.toString())
         .then(function (res) {
           if (!res.ok) throw new Error('backend unreachable');
           return res.json();
         })
         .then(function (data) {
+          setLive(true);
           roCount.textContent = String(data.length);
           roCount.classList.remove('dim');
+          renderResults(data, q);
         })
         .catch(function () {
+          setLive(false);
           roCount.textContent = '0';
           roCount.classList.remove('dim');
-          renderOffline(q);
+          renderOffline();
         })
         .finally(function () {
           searchBtn.removeAttribute('disabled');
