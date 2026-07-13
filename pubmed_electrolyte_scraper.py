@@ -20,12 +20,8 @@ def search_pubmed(keyword, max_results=10):
         "retmode": "json",
         "email": NCBI_EMAIL
     }
-    try:
-        response = requests.get(url, params=params, timeout=30).json()
-        return response.get("esearchresult", {}).get("idlist", [])
-    except Exception as e:
-        print(f"PubMed 검색 중 에러 발생: {e}")
-        return []
+    response = requests.get(url, params=params, timeout=30).json()
+    return response.get("esearchresult", {}).get("idlist", [])
 
 def fetch_paper_details(ids):
     if not ids:
@@ -52,6 +48,8 @@ def fetch_paper_details(ids):
 
     papers = []
     for art in root.findall(".//PubmedArticle"):
+        pmid = art.findtext(".//MedlineCitation/PMID", default="")
+
         te = art.find(".//ArticleTitle")
         title = "".join(te.itertext()) if te is not None else ""
 
@@ -63,16 +61,30 @@ def fetch_paper_details(ids):
                 authors.append(ln.text + (" " + ini.text if ini is not None else ""))
 
         abstract = " ".join("".join(a.itertext()) for a in art.findall(".//AbstractText"))
+
+        journal = art.findtext(".//Article/Journal/Title", default="")
+        pubdate = art.findtext(".//Article/Journal/JournalIssue/PubDate/Year")
+        if not pubdate:
+            pubdate = art.findtext(".//Article/Journal/JournalIssue/PubDate/MedlineDate", default="")
+
         papers.append({
+            "pmid": pmid,
             "title": title,
             "authors": ", ".join(authors),
-            "abstract": abstract
+            "abstract": abstract,
+            "journal": journal,
+            "pubdate": pubdate or "",
+            "url": f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/" if pmid else ""
         })
     return papers
 
 def main():
     print(f"🔍 키워드 [{SEARCH_KEYWORD}] 로 배터리 전문 논문 수집을 시작합니다...")
-    ids = search_pubmed(SEARCH_KEYWORD, MAX_RESULTS)
+    try:
+        ids = search_pubmed(SEARCH_KEYWORD, MAX_RESULTS)
+    except Exception as e:
+        print(f"❌ PubMed 검색 중 에러 발생: {e}")
+        return
     print("📌 분석 대상 논문 ID 개수:", len(ids))
 
     if not ids:
