@@ -1,0 +1,553 @@
+<title>전해액 첨가제 연구 스크리너 — 미리보기</title>
+<style>
+  :root {
+    --bg: #EEF2F3;
+    --surface: #FFFFFF;
+    --surface-2: #F5F8F8;
+    --border: #D9E1E3;
+    --ink: #0F2027;
+    --ink-soft: #4C6570;
+    --ink-faint: #869AA1;
+    --accent: #0E7C86;
+    --accent-strong: #0A5C64;
+    --accent-soft: #E1F2F0;
+    --warn: #B8791F;
+    --warn-soft: #FBF0DD;
+    --danger: #C4433D;
+    --danger-soft: #FBEAE9;
+    --success: #2E9E5B;
+    --radius: 10px;
+    --font-ui: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Malgun Gothic", "Segoe UI", Roboto, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", "Roboto Mono", "Noto Sans Mono", Consolas, monospace;
+  }
+
+  :root[data-theme="dark"] {
+    --bg: #0B1417;
+    --surface: #111C20;
+    --surface-2: #162327;
+    --border: #223138;
+    --ink: #E7EEEF;
+    --ink-soft: #A9BCC1;
+    --ink-faint: #6C8288;
+    --accent: #35D6C9;
+    --accent-strong: #6BE7DC;
+    --accent-soft: rgba(53, 214, 201, 0.13);
+    --warn: #E0A544;
+    --warn-soft: rgba(224, 165, 68, 0.13);
+    --danger: #E5675F;
+    --danger-soft: rgba(229, 103, 95, 0.13);
+    --success: #4FC383;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0B1417;
+      --surface: #111C20;
+      --surface-2: #162327;
+      --border: #223138;
+      --ink: #E7EEEF;
+      --ink-soft: #A9BCC1;
+      --ink-faint: #6C8288;
+      --accent: #35D6C9;
+      --accent-strong: #6BE7DC;
+      --accent-soft: rgba(53, 214, 201, 0.13);
+      --warn: #E0A544;
+      --warn-soft: rgba(224, 165, 68, 0.13);
+      --danger: #E5675F;
+      --danger-soft: rgba(229, 103, 95, 0.13);
+      --success: #4FC383;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font-ui);
+    font-size: 14px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .app {
+    display: grid;
+    grid-template-columns: 272px 1fr;
+    min-height: 100vh;
+  }
+  @media (max-width: 860px) {
+    .app { grid-template-columns: 1fr; }
+  }
+
+  /* ---------- Top strip ---------- */
+  .topstrip {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 14px 22px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+  }
+  .brand { display: flex; align-items: center; gap: 11px; }
+  .brand-mark {
+    width: 30px; height: 30px;
+    border-radius: 8px;
+    background: linear-gradient(155deg, var(--accent), var(--accent-strong));
+    display: flex; align-items: center; justify-content: center;
+    color: #fff; font-family: var(--font-mono); font-weight: 700; font-size: 13px;
+    flex-shrink: 0;
+  }
+  .brand-text h1 { font-size: 14.5px; font-weight: 700; margin: 0; letter-spacing: -0.01em; }
+  .brand-text p { margin: 1px 0 0; font-size: 11.5px; color: var(--ink-faint); font-family: var(--font-mono); }
+
+  .status-chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-family: var(--font-mono);
+    font-size: 11px; font-weight: 600; letter-spacing: 0.02em;
+    padding: 5px 10px 5px 8px;
+    border-radius: 999px;
+    background: var(--warn-soft);
+    color: var(--warn);
+    border: 1px solid color-mix(in srgb, var(--warn) 35%, transparent);
+    white-space: nowrap;
+  }
+  .status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--warn); flex-shrink: 0; }
+
+  /* ---------- Rail ---------- */
+  .rail {
+    border-right: 1px solid var(--border);
+    background: var(--surface);
+    padding: 20px 18px 24px;
+    display: flex; flex-direction: column; gap: 22px;
+  }
+  .rail-section-label {
+    font-family: var(--font-mono);
+    font-size: 10.5px; font-weight: 700;
+    letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--ink-faint);
+    margin: 0 0 10px;
+  }
+  label.field-label {
+    display: block; font-size: 12px; font-weight: 600;
+    color: var(--ink-soft); margin-bottom: 6px;
+  }
+  .field { margin-bottom: 14px; }
+  input[type="text"] {
+    width: 100%;
+    font: inherit;
+    padding: 9px 11px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    color: var(--ink);
+    outline: none;
+    transition: border-color .15s ease, box-shadow .15s ease;
+  }
+  input[type="text"]:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+  }
+  input[type="text"]::placeholder { color: var(--ink-faint); }
+
+  .stepper {
+    display: flex; align-items: stretch;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--surface-2);
+  }
+  .stepper button {
+    all: unset;
+    width: 34px;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer;
+    color: var(--ink-soft);
+    font-family: var(--font-mono);
+    font-size: 15px;
+    transition: background .12s ease;
+  }
+  .stepper button:hover { background: var(--accent-soft); color: var(--accent-strong); }
+  .stepper button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .stepper output {
+    flex: 1;
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-weight: 700; font-size: 13px;
+    border-left: 1px solid var(--border);
+    border-right: 1px solid var(--border);
+  }
+
+  button.primary {
+    all: unset;
+    box-sizing: border-box;
+    width: 100%;
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+    padding: 10px 14px;
+    border-radius: 8px;
+    background: var(--accent);
+    color: #ffffff;
+    font-weight: 700; font-size: 13px;
+    cursor: pointer;
+    transition: background .15s ease, transform .05s ease;
+  }
+  button.primary:hover { background: var(--accent-strong); }
+  button.primary:active { transform: translateY(1px); }
+  button.primary:focus-visible { outline: 2px solid var(--accent-strong); outline-offset: 2px; }
+  button.primary[disabled] { opacity: .6; cursor: progress; }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip {
+    all: unset;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    padding: 4px 9px;
+    border-radius: 999px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    color: var(--ink-soft);
+    cursor: pointer;
+  }
+  .chip:hover { border-color: var(--accent); color: var(--accent-strong); }
+
+  .rail-note {
+    margin-top: auto;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+  }
+  .endpoint-row {
+    display: flex; align-items: baseline; justify-content: space-between;
+    font-family: var(--font-mono); font-size: 11px;
+    color: var(--ink-faint);
+    padding: 3px 0;
+  }
+  .endpoint-row b { color: var(--ink-soft); font-weight: 600; }
+
+  /* ---------- Main ---------- */
+  .main { padding: 22px 26px 40px; min-width: 0; }
+
+  .readout {
+    display: flex; flex-wrap: wrap; gap: 22px;
+    padding: 14px 18px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    margin-bottom: 18px;
+  }
+  .readout-item .k {
+    font-family: var(--font-mono); font-size: 10px; letter-spacing: .07em;
+    text-transform: uppercase; color: var(--ink-faint); margin-bottom: 3px;
+  }
+  .readout-item .v {
+    font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+    font-size: 15px; font-weight: 700; color: var(--ink);
+  }
+  .readout-item .v.dim { color: var(--ink-faint); font-weight: 600; }
+
+  .panel {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+  }
+
+  .empty-state {
+    padding: 56px 32px;
+    text-align: center;
+    color: var(--ink-soft);
+  }
+  .empty-state .glyph {
+    width: 44px; height: 44px; margin: 0 auto 14px;
+    border-radius: 10px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: center;
+    color: var(--ink-faint);
+    font-family: var(--font-mono); font-size: 18px;
+  }
+  .empty-state p.lead { font-weight: 700; color: var(--ink); margin: 0 0 4px; font-size: 13.5px; }
+  .empty-state p.sub { margin: 0; font-size: 12.5px; color: var(--ink-faint); }
+
+  .spinner {
+    width: 20px; height: 20px;
+    border-radius: 50%;
+    border: 2.5px solid var(--accent-soft);
+    border-top-color: var(--accent);
+    animation: spin .7s linear infinite;
+  }
+  @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 1.6s; } }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .loading-row { display: flex; align-items: center; gap: 12px; padding: 20px 22px; border-bottom: 1px solid var(--border); }
+  .loading-row .txt { font-size: 12.5px; color: var(--ink-soft); }
+  .loading-row .txt b { color: var(--ink); }
+
+  .notice {
+    display: flex; gap: 12px;
+    padding: 16px 18px;
+    border-radius: var(--radius);
+    border: 1px solid color-mix(in srgb, var(--warn) 35%, var(--border));
+    background: var(--warn-soft);
+    margin-bottom: 18px;
+  }
+  .notice .glyph { color: var(--warn); font-family: var(--font-mono); font-weight: 800; font-size: 15px; line-height: 1.4; }
+  .notice h3 { margin: 0 0 4px; font-size: 13px; color: var(--ink); }
+  .notice p { margin: 0 0 8px; font-size: 12.5px; color: var(--ink-soft); }
+  .notice code.block {
+    display: block;
+    font-family: var(--font-mono); font-size: 11.5px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 6px; padding: 8px 10px;
+    color: var(--ink-soft);
+    white-space: pre; overflow-x: auto;
+  }
+
+  .skeleton-card {
+    padding: 18px 20px;
+    border-bottom: 1px solid var(--border);
+  }
+  .skeleton-card:last-child { border-bottom: none; }
+  .sk-line {
+    height: 10px; border-radius: 4px;
+    background: linear-gradient(90deg, var(--surface-2) 25%, var(--border) 37%, var(--surface-2) 63%);
+    background-size: 400% 100%;
+    animation: shimmer 2.2s ease infinite;
+  }
+  @media (prefers-reduced-motion: reduce) { .sk-line { animation: none; } }
+  @keyframes shimmer { 0% { background-position: 100% 0; } 100% { background-position: 0 0; } }
+
+  .card-list { display: flex; flex-direction: column; }
+  .paper-card { padding: 18px 20px; border-bottom: 1px solid var(--border); }
+  .paper-card:last-child { border-bottom: none; }
+  .paper-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 8px; }
+  .tag {
+    font-family: var(--font-mono); font-size: 10.5px; font-weight: 700;
+    padding: 2px 7px; border-radius: 5px;
+    background: var(--surface-2); border: 1px solid var(--border);
+    color: var(--ink-faint);
+  }
+  .paper-title { font-size: 13.5px; font-weight: 700; margin: 0 0 3px; color: var(--ink-faint); font-style: italic; }
+  .paper-sub { font-size: 12px; color: var(--ink-faint); margin: 0 0 10px; }
+  .paper-abstract {
+    font-size: 12px; color: var(--ink-faint);
+    border-left: 3px solid var(--border);
+    padding: 8px 12px; border-radius: 0 6px 6px 0;
+    background: var(--surface-2);
+  }
+
+  a.textlink { color: var(--accent); text-decoration: none; font-weight: 600; }
+  a.textlink:hover { text-decoration: underline; }
+
+  .visually-hidden {
+    position: absolute; width: 1px; height: 1px; overflow: hidden;
+    clip: rect(0 0 0 0); white-space: nowrap;
+  }
+</style>
+
+<div class="app">
+  <div class="topstrip">
+    <div class="brand">
+      <div class="brand-mark">Li</div>
+      <div class="brand-text">
+        <h1>전해액 첨가제 연구 스크리너</h1>
+        <p>PUBMED E-UTILITIES · SEARCH INTERFACE</p>
+      </div>
+    </div>
+    <span class="status-chip"><span class="status-dot"></span>OFFLINE PREVIEW</span>
+  </div>
+
+  <aside class="rail">
+    <div>
+      <p class="rail-section-label">검색 조건</p>
+      <div class="field">
+        <label class="field-label" for="kw">연구 키워드</label>
+        <input id="kw" type="text" placeholder="예: SEI, high temperature, FEC" />
+      </div>
+      <div class="field">
+        <label class="field-label" for="maxout">최대 검색 논문 수</label>
+        <div class="stepper">
+          <button type="button" id="dec" aria-label="개수 줄이기">&minus;</button>
+          <output id="maxout" for="dec inc">10</output>
+          <button type="button" id="inc" aria-label="개수 늘리기">+</button>
+        </div>
+      </div>
+      <button class="primary" id="searchBtn" type="button">
+        <span id="searchBtnIcon">&#8981;</span>
+        <span id="searchBtnLabel">PubMed 검색 시작</span>
+      </button>
+    </div>
+
+    <div>
+      <p class="rail-section-label">추천 키워드</p>
+      <div class="chips">
+        <button class="chip" data-kw="high temperature">high temperature</button>
+        <button class="chip" data-kw="SEI">SEI</button>
+        <button class="chip" data-kw="high voltage">high voltage</button>
+        <button class="chip" data-kw="fast charge">fast charge</button>
+        <button class="chip" data-kw="sultone">sultone</button>
+      </div>
+    </div>
+
+    <div class="rail-note">
+      <p class="rail-section-label">연결 상태</p>
+      <div class="endpoint-row"><span>Frontend</span><b>artifact preview</b></div>
+      <div class="endpoint-row"><span>API</span><b>/api/search</b></div>
+      <div class="endpoint-row"><span>Backend</span><b style="color:var(--warn)">연결 안 됨</b></div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <div class="readout">
+      <div class="readout-item">
+        <div class="k">Last Query</div>
+        <div class="v dim" id="roQuery">&mdash;</div>
+      </div>
+      <div class="readout-item">
+        <div class="k">Results</div>
+        <div class="v dim" id="roCount">&mdash;</div>
+      </div>
+      <div class="readout-item">
+        <div class="k">State</div>
+        <div class="v dim" id="roState">idle</div>
+      </div>
+    </div>
+
+    <div id="content"></div>
+  </main>
+</div>
+
+<script>
+  (function () {
+    var kwInput = document.getElementById('kw');
+    var maxOut = document.getElementById('maxout');
+    var content = document.getElementById('content');
+    var searchBtn = document.getElementById('searchBtn');
+    var btnIcon = document.getElementById('searchBtnIcon');
+    var btnLabel = document.getElementById('searchBtnLabel');
+    var roQuery = document.getElementById('roQuery');
+    var roCount = document.getElementById('roCount');
+    var roState = document.getElementById('roState');
+
+    var maxResults = 10;
+
+    document.getElementById('dec').addEventListener('click', function () {
+      maxResults = Math.max(5, maxResults - 5);
+      maxOut.textContent = maxResults;
+    });
+    document.getElementById('inc').addEventListener('click', function () {
+      maxResults = Math.min(20, maxResults + 5);
+      maxOut.textContent = maxResults;
+    });
+
+    document.querySelectorAll('.chip').forEach(function (chip) {
+      chip.addEventListener('click', function () {
+        kwInput.value = chip.getAttribute('data-kw');
+        kwInput.focus();
+      });
+    });
+
+    function renderIdle() {
+      content.innerHTML =
+        '<div class="panel">' +
+          '<div class="empty-state">' +
+            '<div class="glyph">&#8981;</div>' +
+            '<p class="lead">검색 패널에 키워드를 입력하고 PubMed 검색을 시작해 주세요.</p>' +
+            '<p class="sub">실제 서비스에서는 PubMed E-utilities API를 통해 논문을 조회합니다.</p>' +
+          '</div>' +
+        '</div>' +
+        skeletonLayoutHTML();
+    }
+
+    function skeletonLayoutHTML() {
+      function row(w) { return '<div class="sk-line" style="width:' + w + '"></div>'; }
+      return (
+        '<p class="rail-section-label" style="margin:22px 0 10px;">결과 카드 레이아웃 예시 (실 데이터 아님)</p>' +
+        '<div class="panel"><div class="skeleton-card">' +
+          '<div style="display:flex;gap:6px;margin-bottom:12px;">' +
+            '<div class="sk-line" style="width:54px;height:16px;border-radius:5px;"></div>' +
+            '<div class="sk-line" style="width:120px;height:16px;border-radius:5px;"></div>' +
+          '</div>' +
+          row('72%') +
+          '<div style="height:8px;"></div>' + row('40%') +
+          '<div style="height:14px;"></div>' + row('96%') +
+          '<div style="height:6px;"></div>' + row('88%') +
+          '<div style="height:6px;"></div>' + row('60%') +
+        '</div></div>'
+      );
+    }
+
+    function renderLoading(q) {
+      roState.textContent = 'loading';
+      roState.classList.remove('dim');
+      content.innerHTML =
+        '<div class="panel">' +
+          '<div class="loading-row">' +
+            '<div class="spinner" role="status" aria-label="검색 중"></div>' +
+            '<div class="txt">PubMed에서 <b>' + escapeHtml(q) + '</b> 검색 중입니다&hellip;</div>' +
+          '</div>' +
+        '</div>';
+    }
+
+    function renderOffline(q) {
+      roState.textContent = 'offline';
+      content.innerHTML =
+        '<div class="notice">' +
+          '<div class="glyph">&#9888;</div>' +
+          '<div>' +
+            '<h3>이 미리보기는 백엔드에 연결되어 있지 않습니다</h3>' +
+            '<p>Artifact 미리보기 창은 외부 네트워크 요청이 차단되어 있어 실제 PubMed 검색 결과를 불러올 수 없습니다. 대시보드의 레이아웃과 동작을 확인하는 용도로만 사용해 주세요.</p>' +
+            '<p>실제 검색 결과를 보려면 로컬에서 아래 두 프로세스를 함께 실행하세요.</p>' +
+            '<code class="block">pip install -r requirements.txt &amp;&amp; python server.py   # 백엔드, :5000\nnpm install &amp;&amp; npm run dev                          # 프런트엔드, :5173</code>' +
+          '</div>' +
+        '</div>' +
+        skeletonLayoutHTML();
+    }
+
+    function escapeHtml(s) {
+      var d = document.createElement('div');
+      d.textContent = s;
+      return d.innerHTML;
+    }
+
+    function runSearch() {
+      var q = kwInput.value.trim() || 'lithium battery electrolyte additive SEI';
+      roQuery.textContent = q;
+      roQuery.classList.remove('dim');
+      roCount.textContent = '&mdash;';
+
+      searchBtn.setAttribute('disabled', 'true');
+      btnIcon.textContent = '↻';
+      btnLabel.textContent = 'PubMed 검색 중...';
+      renderLoading(q);
+
+      var params = new URLSearchParams({ keyword: q, max: String(maxResults) });
+      fetch('/api/search?' + params.toString())
+        .then(function (res) {
+          if (!res.ok) throw new Error('backend unreachable');
+          return res.json();
+        })
+        .then(function (data) {
+          roCount.textContent = String(data.length);
+          roCount.classList.remove('dim');
+        })
+        .catch(function () {
+          roCount.textContent = '0';
+          roCount.classList.remove('dim');
+          renderOffline(q);
+        })
+        .finally(function () {
+          searchBtn.removeAttribute('disabled');
+          btnIcon.textContent = '⦁';
+          btnLabel.textContent = 'PubMed 검색 시작';
+        });
+    }
+
+    searchBtn.addEventListener('click', runSearch);
+    kwInput.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') runSearch();
+    });
+
+    renderIdle();
+  })();
+</script>
