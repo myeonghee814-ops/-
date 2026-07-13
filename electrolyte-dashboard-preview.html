@@ -409,10 +409,12 @@
     </div>
 
     <div class="rail-note">
-      <p class="rail-section-label">연결 상태</p>
-      <div class="endpoint-row"><span>Frontend</span><b>local file</b></div>
-      <div class="endpoint-row"><span>API</span><b id="apiBaseLabel">http://localhost:5000</b></div>
+      <p class="rail-section-label">백엔드 서버 주소</p>
+      <div class="field" style="margin-bottom: 8px;">
+        <input id="apiBaseInput" type="text" placeholder="https://your-app.onrender.com" />
+      </div>
       <div class="endpoint-row"><span>Backend</span><b id="backendStatus" style="color:var(--warn)">확인 중</b></div>
+      <p style="font-size:10.5px; color:var(--ink-faint); margin: 8px 0 0;">이 컴퓨터의 브라우저에만 저장됩니다. 배포한 서버가 있다면 그 주소로 바꿔주세요.</p>
     </div>
   </aside>
 
@@ -450,8 +452,22 @@
     var statusChip = document.getElementById('statusChip');
     var statusLabel = document.getElementById('statusLabel');
     var backendStatus = document.getElementById('backendStatus');
+    var apiBaseInput = document.getElementById('apiBaseInput');
 
-    var API_BASE = 'http://localhost:5000';
+    var STORAGE_KEY = 'electrolyte-screener-api-base';
+    var API_BASE = localStorage.getItem(STORAGE_KEY) || 'http://localhost:5000';
+    apiBaseInput.value = API_BASE;
+
+    apiBaseInput.addEventListener('change', function () {
+      var v = apiBaseInput.value.trim().replace(/\/$/, '');
+      API_BASE = v || 'http://localhost:5000';
+      apiBaseInput.value = API_BASE;
+      localStorage.setItem(STORAGE_KEY, API_BASE);
+      setLive(false);
+      backendStatus.textContent = '확인 중';
+      backendStatus.style.color = 'var(--warn)';
+    });
+
     var maxResults = 10;
 
     function setLive(isLive) {
@@ -525,8 +541,8 @@
         '<div class="notice">' +
           '<div class="glyph">&#9888;</div>' +
           '<div>' +
-            '<h3>백엔드(server.py)에 연결할 수 없습니다</h3>' +
-            '<p>이 화면은 <code>' + API_BASE + '</code> 로 실제 PubMed 검색을 요청합니다. 아래 명령으로 백엔드를 먼저 실행한 뒤 다시 검색해 주세요.</p>' +
+            '<h3>백엔드에 연결할 수 없습니다</h3>' +
+            '<p>이 화면은 <code>' + escapeHtml(API_BASE) + '</code> 로 실제 PubMed 검색을 요청합니다. 왼쪽 &quot;백엔드 서버 주소&quot;가 맞는지 확인하거나, 아래 명령으로 로컬 백엔드를 먼저 실행한 뒤 다시 검색해 주세요.</p>' +
             '<code class="block">pip install -r requirements.txt\npython server.py   # http://localhost:5000 에서 대기</code>' +
           '</div>' +
         '</div>' +
