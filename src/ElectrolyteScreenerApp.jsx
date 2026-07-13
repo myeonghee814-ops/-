@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Search, FileText, Download, RefreshCw, Layers, Sliders, ExternalLink, AlertCircle } from 'lucide-react';
+import { Search, FileText, Download, RefreshCw, Layers, Sliders, ExternalLink, AlertCircle, FlaskConical, TrendingUp } from 'lucide-react';
 
 const DEFAULT_KEYWORD = 'lithium battery electrolyte additive SEI';
 
@@ -126,7 +126,7 @@ export default function ElectrolyteScreenerApp() {
             <div className="bg-white border border-gray-200 rounded-xl p-12 text-center text-gray-500 shadow-sm">
               <FileText className="mx-auto text-gray-300 mb-3" size={40} />
               <p className="text-sm font-medium">검색 패널에 키워드를 입력하고 PubMed 검색을 시작해 주세요.</p>
-              <p className="text-xs text-gray-400 mt-1">실제 PubMed E-utilities API를 통해 논문을 조회합니다.</p>
+              <p className="text-xs text-gray-400 mt-1">전해액/배터리 연구 맥락에 맞춰 연관성 높은 논문을 찾고, 가능한 경우 실험 조건·핵심 결과를 따로 정리해 보여드립니다.</p>
             </div>
           ) : loading ? (
             <div className="bg-white border border-gray-200 rounded-xl p-12 text-center text-gray-500 shadow-sm space-y-3">
@@ -190,9 +190,30 @@ export default function ElectrolyteScreenerApp() {
                     <h3 className="text-sm font-bold text-gray-900 mb-1 leading-snug">{paper.title}</h3>
                     <p className="text-xs text-gray-400 mb-3">{paper.authors}</p>
 
-                    {paper.abstract && (
-                      <div className="bg-gray-50 border-l-4 border-blue-500 p-3 rounded-r-lg">
-                        <h4 className="text-[11px] font-bold text-blue-700 uppercase mb-0.5">초록 (Abstract)</h4>
+                    {paper.structured ? (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                        {paper.methods && (
+                          <div className="bg-blue-50 border-l-4 border-blue-500 p-3 rounded-r-lg">
+                            <h4 className="text-[11px] font-bold text-blue-700 uppercase mb-0.5 flex items-center gap-1">
+                              <FlaskConical size={11} /> 실험 조건
+                            </h4>
+                            <p className="text-xs text-gray-700 leading-relaxed">{paper.methods}</p>
+                          </div>
+                        )}
+                        {paper.results && (
+                          <div className="bg-green-50 border-l-4 border-green-500 p-3 rounded-r-lg">
+                            <h4 className="text-[11px] font-bold text-green-700 uppercase mb-0.5 flex items-center gap-1">
+                              <TrendingUp size={11} /> 핵심 결과
+                            </h4>
+                            <p className="text-xs text-gray-700 leading-relaxed">{paper.results}</p>
+                          </div>
+                        )}
+                      </div>
+                    ) : paper.abstract && (
+                      <div className="bg-gray-50 border-l-4 border-gray-300 p-3 rounded-r-lg">
+                        <h4 className="text-[11px] font-bold text-gray-500 uppercase mb-0.5">
+                          초록 (구조화된 요약 없음, 전체 원문)
+                        </h4>
                         <p className="text-xs text-gray-700 leading-relaxed">{paper.abstract}</p>
                       </div>
                     )}

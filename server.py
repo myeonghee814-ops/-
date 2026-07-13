@@ -17,7 +17,7 @@ from flask import Flask, jsonify, request, send_file
 from flask_cors import CORS
 import pandas as pd
 
-from pubmed_electrolyte_scraper import fetch_paper_details, search_pubmed
+from pubmed_electrolyte_scraper import build_relevance_query, fetch_paper_details, search_pubmed
 
 app = Flask(__name__)
 CORS(app)
@@ -26,7 +26,10 @@ DEFAULT_KEYWORD = '(lithium battery electrolyte additive) AND (SEI OR "high temp
 
 
 def run_search(keyword, max_results):
-    ids = search_pubmed(keyword, max_results)
+    ids = search_pubmed(build_relevance_query(keyword), max_results)
+    if not ids:
+        # 도메인 한정 쿼리로 0건이면, 원래 키워드로 한 번 더 시도한다.
+        ids = search_pubmed(keyword, max_results)
     return fetch_paper_details(ids)
 
 
@@ -50,7 +53,10 @@ def api_export():
     except Exception as e:
         return jsonify({"error": f"PubMed 검색에 실패했습니다: {e}"}), 502
 
-    df = pd.DataFrame(papers, columns=["pmid", "title", "authors", "journal", "pubdate", "url", "abstract"])
+    df = pd.DataFrame(papers, columns=[
+        "pmid", "title", "authors", "journal", "pubdate", "url",
+        "methods", "results", "background", "conclusion", "structured", "abstract",
+    ])
     buffer = io.BytesIO()
     df.to_excel(buffer, index=False, engine="openpyxl")
     buffer.seek(0)

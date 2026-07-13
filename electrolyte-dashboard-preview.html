@@ -337,10 +337,30 @@
   .paper-sub { font-size: 12px; color: var(--ink-faint); margin: 0 0 10px; }
   .paper-abstract {
     font-size: 12px; color: var(--ink-soft);
-    border-left: 3px solid var(--accent);
+    border-left: 3px solid var(--border);
     padding: 8px 12px; border-radius: 0 6px 6px 0;
     background: var(--surface-2);
   }
+  .paper-findings {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+  @media (max-width: 620px) { .paper-findings { grid-template-columns: 1fr; } }
+  .finding-block {
+    font-size: 12px; color: var(--ink-soft);
+    padding: 8px 12px; border-radius: 0 6px 6px 0;
+  }
+  .finding-block h4 {
+    font-family: var(--font-mono);
+    font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em;
+    margin: 0 0 4px;
+    display: flex; align-items: center; gap: 5px;
+  }
+  .finding-block.methods { border-left: 3px solid var(--accent); background: var(--accent-soft); }
+  .finding-block.methods h4 { color: var(--accent-strong); }
+  .finding-block.results { border-left: 3px solid var(--success); background: color-mix(in srgb, var(--success) 12%, transparent); }
+  .finding-block.results h4 { color: var(--success); }
   .results-toolbar {
     display: flex; align-items: center; justify-content: space-between;
     padding: 12px 18px; border-bottom: 1px solid var(--border);
@@ -499,7 +519,7 @@
           '<div class="empty-state">' +
             '<div class="glyph">&#8981;</div>' +
             '<p class="lead">검색 패널에 키워드를 입력하고 PubMed 검색을 시작해 주세요.</p>' +
-            '<p class="sub">실제 서비스에서는 PubMed E-utilities API를 통해 논문을 조회합니다.</p>' +
+            '<p class="sub">전해액/배터리 연구 맥락에 맞춰 연관성 높은 논문을 찾고, 가능한 경우 실험 조건·핵심 결과를 따로 정리해 보여드립니다.</p>' +
           '</div>' +
         '</div>' +
         skeletonLayoutHTML();
@@ -565,13 +585,29 @@
         var meta = '<span class="tag">No. ' + (idx + 1) + '</span>';
         if (p.journal) meta += '<span class="tag">' + escapeHtml(p.journal) + (p.pubdate ? ' · ' + escapeHtml(p.pubdate) : '') + '</span>';
         var link = p.url ? '<a class="textlink" href="' + escapeHtml(p.url) + '" target="_blank" rel="noreferrer">PubMed에서 보기 &#8599;</a>' : '';
-        var abstract = p.abstract ? '<div class="paper-abstract">' + escapeHtml(p.abstract) + '</div>' : '';
+
+        var findings;
+        if (p.structured && (p.methods || p.results)) {
+          findings = '<div class="paper-findings">';
+          if (p.methods) {
+            findings += '<div class="finding-block methods"><h4>&#129514; 실험 조건</h4>' + escapeHtml(p.methods) + '</div>';
+          }
+          if (p.results) {
+            findings += '<div class="finding-block results"><h4>&#128200; 핵심 결과</h4>' + escapeHtml(p.results) + '</div>';
+          }
+          findings += '</div>';
+        } else if (p.abstract) {
+          findings = '<div class="paper-abstract"><div style="font-family:var(--font-mono);font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-faint);margin-bottom:4px;">초록 (구조화된 요약 없음, 전체 원문)</div>' + escapeHtml(p.abstract) + '</div>';
+        } else {
+          findings = '';
+        }
+
         return (
           '<div class="paper-card">' +
             '<div class="paper-meta">' + meta + link + '</div>' +
             '<p class="paper-title">' + escapeHtml(p.title || '(제목 없음)') + '</p>' +
             '<p class="paper-sub">' + escapeHtml(p.authors || '') + '</p>' +
-            abstract +
+            findings +
           '</div>'
         );
       }).join('');
