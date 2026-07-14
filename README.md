@@ -177,44 +177,27 @@ for the full list of what a further production hardening pass would add.
 
 ## Packaging as a standalone desktop app (.exe)
 
-Not implemented yet — this is a design note for turning BLIP into a real
-installable program instead of "two dev servers + a shortcut script."
+Scaffolded in [`desktop-app/`](desktop-app/README.md) using Tauri (not
+Electron — wraps the OS's built-in webview instead of bundling Chromium,
+so the installer is single-digit MB instead of 100MB+): the Python
+backend is frozen with PyInstaller into a self-contained binary
+(`backend/pyinstaller.spec`), served as a Tauri sidecar, with FastAPI
+itself serving the built frontend (`main.py`'s `_frontend_dist_dir()`) so
+the packaged app is one process on one port. `tauri build` then produces
+a normal Windows installer (`.msi`/NSIS) with its own Start Menu/Desktop
+shortcuts, replacing the `desktop/*.vbs` shortcut hack entirely.
 
-**Recommendation: Tauri, not Electron.** Tauri wraps the OS's built-in
-webview (WebView2 on Windows, already present on Win10 21H2+/Win11)
-instead of bundling Chromium, so the installer is single-digit MB instead
-of 100MB+, and idle memory use is far lower. The tradeoff is a Rust build
-toolchain and, on older Windows installs, a one-time ~150KB WebView2
-bootstrapper. Electron is the safer choice only if pixel-identical
-rendering across every Windows version matters more than install size —
-not the case here.
-
-**The real work either way is the Python backend**, since neither Tauri
-nor Electron can run it directly:
-
-1. Freeze the backend into a native binary: `pyinstaller --onefile
-   backend/main.py` (as an ASGI app, invoke it via a small entry script
-   that calls `uvicorn.run(app, port=8000)` rather than the `uvicorn`
-   CLI, since PyInstaller can't discover `main:app` the way the CLI does).
-2. Have FastAPI serve the built frontend (`frontend/dist/`) itself via
-   `StaticFiles`, so the packaged app is a single backend process on one
-   port — no separate frontend dev server to manage at runtime. (Vite's
-   dev server stays dev-only; `npm run build` output gets mounted instead.)
-3. Register that frozen binary as a Tauri "sidecar": Tauri spawns it on
-   app launch and kills it on window close, and the webview points at
-   `http://localhost:8000` once a readiness check passes (same idea as
-   `desktop/start.ps1`'s `Wait-ForUrl`, but inside the Rust shell instead
-   of PowerShell).
-4. `tauri build` produces a normal Windows installer (`.msi`/NSIS `.exe`)
-   that installs to Program Files and creates its own Start Menu/Desktop
-   shortcuts — replacing the `desktop/*.vbs` shortcut hack entirely.
-
-Effort is roughly a day of focused work (PyInstaller spec + hidden-import
-fixes for FastAPI/SQLAlchemy/openpyxl/the OpenAI SDK, Tauri sidecar
-config, one Windows machine to actually build and test on — this repo's
-sandbox can't produce or verify a Windows `.exe`). Worth doing once the
-UI stabilizes; premature before that, since every UI change means
-re-verifying the packaged build too.
+The backend-freezing and frontend-serving pieces were built and run
+end-to-end (health check, SPA route fallback, static assets, API routes
+all verified working from the frozen binary). The Rust shell's API usage
+was checked line-for-line against the actual `tauri`/`tauri-plugin-shell`
+crate source rather than guessed. What's *not* verified: an actual
+Windows build — this repo's sandbox has no Windows machine and couldn't
+even fully compile the Tauri shell on Linux (blocked on installing GTK
+dev libraries, irrelevant to Windows but still meant `cargo check` never
+ran clean here). See `desktop-app/README.md`'s "검증 상태" section for
+exactly what is and isn't confirmed before running `tauri build` for
+real.
 
 ## Roadmap
 

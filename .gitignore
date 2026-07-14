@@ -26,3 +26,18 @@ frontend/*.tsbuildinfo
 
 # Desktop launcher runtime logs (see desktop/start.ps1)
 /logs/
+
+# PyInstaller build output (see backend/pyinstaller.spec)
+backend/build/
+backend/dist/
+
+# Tauri desktop app build artifacts (see desktop-app/README.md) --
+# frontend_dist/, binaries/*, and icons/* are generated locally by the
+# build steps there, not checked in.
+desktop-app/frontend_dist/
+desktop-app/src-tauri/target/
+desktop-app/src-tauri/gen/
+desktop-app/src-tauri/binaries/*
+!desktop-app/src-tauri/binaries/README.md
+desktop-app/src-tauri/icons/*
+!desktop-app/src-tauri/icons/README.md

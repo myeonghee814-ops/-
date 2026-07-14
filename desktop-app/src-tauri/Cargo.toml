@@ -1,0 +1,17 @@
+[package]
+name = "blip-desktop"
+version = "0.1.0"
+description = "BLIP desktop shell -- wraps the packaged backend/frontend as a Windows app"
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-shell = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Small blocking HTTP client, just to poll the sidecar's /api/v1/health
+# once at startup -- not worth pulling in an async runtime for that alone.
+ureq = "2"
