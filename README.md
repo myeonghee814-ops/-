@@ -159,6 +159,16 @@ release/                    electron-builder's output directory (git-ignored;
   the built `dist/`". TypeScript types are hand-mirrored from the backend
   Pydantic schemas (`frontend/src/api/types.ts`) to keep the contract
   explicit without adding codegen tooling at MVP stage.
+  - The build uses `HashRouter` (not `BrowserRouter`) and
+    `vite-plugin-singlefile`: once loaded via `file://` (Electron's packaged
+    app, or a plain double-click on `dist/index.html`), the page's origin is
+    `"null"` and its pathname is a filesystem path, not `"/"` - a regular
+    `<script type="module" src="...">` gets blocked by CORS and
+    `BrowserRouter` can't match any route against a filesystem-path
+    pathname. Inlining everything into one non-module script (singlefile)
+    and routing off the URL hash sidesteps both issues, so the exact same
+    build works identically over `http://localhost:5173`, packaged in
+    Electron, or opened directly as a standalone `.html` file.
 - **OpenAI API (AI)** - one call expands the user's Korean/English/shorthand
   keyword into an English PubMed query, one batched call re-ranks *all*
   PubMed candidates together (so the model compares them against each other,
@@ -224,6 +234,17 @@ A search request runs the full pipeline synchronously and can take
 10-60 seconds depending on OpenAI latency and how many of the top-10 papers
 still need metadata extraction - this is intentional for MVP simplicity
 (no background job queue).
+
+### Offline UI preview (no backend, no API key)
+
+`VITE_MOCK_API=true npm run build` (inside `frontend/`) produces a
+`dist/index.html` that runs entirely on canned Korean-mocked data
+(`frontend/src/api/mockData.ts`) instead of calling the real backend - useful
+for reviewing UI/UX changes (e.g. with a non-technical stakeholder) without
+setting up Python or an OpenAI key. It's a single self-contained HTML file:
+double-clicking it opens the full app in a browser. Never used by the real
+app - `MOCK_API` in `frontend/src/api/client.ts` defaults to off, and normal
+`npm run build`/`npm run dev` are unaffected.
 
 ## Windows desktop build
 
