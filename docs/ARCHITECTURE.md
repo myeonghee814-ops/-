@@ -1,10 +1,10 @@
 # BLIP Architecture
 
 This document explains the design decisions behind the project. Literature
-search (`GET /api/search`), AI paper analysis (`POST /api/v1/analyze`), and
-the AI comparison engine (`POST /api/v1/compare`) are implemented;
-persisting/organizing papers is not — this describes the scaffolding that
-remaining feature will be built on.
+search (`GET /api/search`), AI paper analysis (`POST /api/v1/analyze`), the
+AI comparison engine (`POST /api/v1/compare`), and Excel export
+(`POST /api/v1/export`) are implemented; persisting/organizing papers is
+not — this describes the scaffolding that remaining feature will be built on.
 
 ## Layering (backend)
 
@@ -95,9 +95,9 @@ types/        Shared TypeScript types, mirroring backend Pydantic schemas
 - **services/** isolates the HTTP layer: if the API contract changes,
   only the relevant `*Service.ts` file changes, not every component that
   uses it.
-- **AG Grid** is installed as a dependency now because comparing large
-  sets of papers (sorting/filtering/pinning columns) is the core future
-  feature it's chosen for, but no grid is wired up yet.
+- **AG Grid** powers the search results table, including multi-row
+  selection (`rowSelection={{ mode: 'multiRow', checkboxes: true }}`) used
+  to pick papers for Excel export.
 - The Vite dev server proxies `/api` to the backend (`vite.config.ts`), so
   in development the frontend can call relative paths and never needs
   `VITE_API_BASE_URL` set; in Docker/production that env var points
@@ -213,6 +213,54 @@ already-extracted `PaperAnalysis` fields as JSON, not the original
 abstracts — this keeps the comparison call cheap (no re-processing raw
 text) and lets the model focus purely on cross-paper synthesis.
 
+## Excel export (`POST /api/v1/export`)
+
+Input: `schemas/export.py::ExportRequest` — the papers the user selected in
+the search results grid (`{"papers": [PaperResult, ...]}`). Output: a
+`.xlsx` file (`StreamingResponse`, not JSON) with four sheets: **Summary
+Table** (bibliographic metadata, straight from the search results),
+**Experimental Conditions**, **AI Summary** (innovation/findings/advantages
+/limitations/future work), and **Comparison** (cross-paper synthesis plus a
+per-paper side-by-side table).
+
+**Export is the first thing that actually calls `/analyze` and `/compare`
+from a user action.** `services/export_service.py` analyzes every selected
+paper concurrently (`asyncio.gather`, using each paper's title+abstract
+already in hand from search — no re-fetching), then runs the comparison
+engine over whatever analyses succeeded, provided there are at least
+`COMPARISON_MIN_PAPERS`. This is different from the frontend's paper detail
+page, which still only shows static placeholders — export doesn't reuse
+that UI, it drives the AI pipeline directly from the backend.
+
+**An export should basically never hard-fail.** The Summary Table sheet
+only needs data already in hand (no AI), so it always succeeds. If AI
+analysis fails for a paper (no `OPENAI_API_KEY`, a rate limit, a paper with
+no abstract, etc.), that paper's rows in the Experimental Conditions/AI
+Summary sheets just say "Not analyzed" rather than aborting the whole
+export — same "degrade gracefully, don't fabricate" principle as the paper
+detail page and `/analyze` itself. Comparison degrades the same way: below
+the minimum batch size (or on a provider failure), the Comparison sheet
+shows an explanatory note instead of fake data.
+
+**openpyxl usage is split from AI orchestration.** `services/excel_export_service.py`
+is synchronous and network-free — it only takes already-fetched
+papers/analyses/a comparison (or `None`) and returns workbook bytes. It
+never calls `analyze_paper` or `compare_papers` itself, which makes it
+fully unit-testable (parse the output with `openpyxl.load_workbook` and
+assert on sheet names, header styling, frozen panes, column widths)
+without mocking any network boundary. `services/export_service.py` is the
+only async piece, and its only job is gathering the data this module needs.
+
+**Formatting choices**, applied consistently across sheets: a dark header
+row (`fill`+bold white `font`) frozen via `freeze_panes`, thin borders on
+every data cell, alternating row banding for readability, and column widths
+computed from actual cell content (capped so a full abstract or a joined
+bullet list can't blow out a column to an unusable width). The Comparison
+sheet is laid out as a short report (labeled facts, bulleted lists) followed
+by its own per-paper table — `freeze_panes` is set below *that* table's
+header rather than at row 1, since that's the part of the sheet actually
+long enough to need it.
+
 ## Docker
 
 Each service has its own `Dockerfile`; the root `docker-compose.yml` runs
@@ -225,11 +273,15 @@ out in `docker-compose.yml` until the project needs it.
 
 ## What's deliberately not here yet
 
-- No persistence of search results or analyses (both are live-only; nothing
-  is written to the `papers` table yet — that's a separate "ingestion" concern)
-- No frontend wiring for AI analysis or comparison yet (see above)
+- No persistence of search results or analyses (all live-only; nothing is
+  written to the `papers` table yet — that's a separate "ingestion" concern)
+- No dedicated frontend UI for AI analysis/comparison outside of export
+  (the paper detail page's Quick Summary cards are still static placeholders)
 - No automatic server-side trigger that counts analyses over time and fires
-  the comparison on its own — the caller supplies the batch (see above)
+  the comparison on its own — the caller (or, for export, the selected
+  batch) supplies the papers each time
+- No caching of AI analyses — exporting overlapping paper sets re-analyzes
+  shared papers rather than reusing prior results
 - No auth/user accounts
 - No Alembic migrations (SQLite schema is created ad hoc during this
   scaffolding phase; Alembic should be introduced alongside the first real

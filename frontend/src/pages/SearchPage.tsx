@@ -5,9 +5,10 @@ import { AgGridReact } from 'ag-grid-react'
 import { useCallback, useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
-import type { ColDef, RowClickedEvent, ValueFormatterParams } from 'ag-grid-community'
+import type { ColDef, RowClickedEvent, SelectionChangedEvent, ValueFormatterParams } from 'ag-grid-community'
 
 import LoadingSpinner from '@/components/LoadingSpinner'
+import { useExportPapers } from '@/hooks/useExportPapers'
 import { useSearchPapers } from '@/hooks/useSearchPapers'
 import type { PaperResult, SearchParams } from '@/types/paper'
 
@@ -36,8 +37,10 @@ export default function SearchPage() {
   const [limit, setLimit] = useState(20)
   const [formError, setFormError] = useState<string | null>(null)
   const [submittedQuery, setSubmittedQuery] = useState<SearchParams | null>(null)
+  const [selectedRows, setSelectedRows] = useState<GridRow[]>([])
 
   const { data, isFetching, isError, error } = useSearchPapers(submittedQuery)
+  const exportMutation = useExportPapers()
 
   const handleSearch = useCallback(
     (event: FormEvent) => {
@@ -124,6 +127,15 @@ export default function SearchPage() {
     },
     [navigate],
   )
+
+  const handleSelectionChanged = useCallback((event: SelectionChangedEvent<GridRow>) => {
+    setSelectedRows(event.api.getSelectedRows())
+  }, [])
+
+  const handleExport = useCallback(() => {
+    const papers: PaperResult[] = selectedRows.map(({ _id, ...paper }) => paper)
+    exportMutation.mutate(papers)
+  }, [selectedRows, exportMutation])
 
   return (
     <section className="space-y-6">
@@ -227,16 +239,35 @@ export default function SearchPage() {
 
       {submittedQuery !== null && (
         <div className="rounded-xl border border-slate-200 bg-white shadow-sm">
-          <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3 text-sm text-slate-500">
-            {data ? (
-              <span>
-                {data.count} result{data.count === 1 ? '' : 's'} via {formatSourceName(data.source)}
-              </span>
-            ) : (
-              <span>&nbsp;</span>
-            )}
-            {isFetching && <LoadingSpinner />}
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-4 py-3 text-sm text-slate-500">
+            <div className="flex items-center gap-2">
+              {data && (
+                <span>
+                  {data.count} result{data.count === 1 ? '' : 's'} via {formatSourceName(data.source)}
+                </span>
+              )}
+              {selectedRows.length > 0 && (
+                <span className="text-slate-400">· {selectedRows.length} selected</span>
+              )}
+            </div>
+            <div className="flex items-center gap-3">
+              {isFetching && <LoadingSpinner />}
+              <button
+                type="button"
+                onClick={handleExport}
+                disabled={selectedRows.length === 0 || exportMutation.isPending}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {exportMutation.isPending ? 'Exporting…' : `Export Selected (${selectedRows.length})`}
+              </button>
+            </div>
           </div>
+
+          {exportMutation.isError && (
+            <div className="border-b border-slate-100 px-4 py-2 text-xs text-red-600">
+              Export failed. Please try again.
+            </div>
+          )}
 
           {isError && (
             <div className="p-6 text-sm text-red-600">
@@ -254,6 +285,8 @@ export default function SearchPage() {
                 rowData={rowData}
                 columnDefs={columnDefs}
                 onRowClicked={handleRowClicked}
+                onSelectionChanged={handleSelectionChanged}
+                rowSelection={{ mode: 'multiRow', checkboxes: true, headerCheckbox: true }}
                 rowStyle={{ cursor: 'pointer' }}
                 animateRows
                 defaultColDef={{ resizable: true, sortable: true }}

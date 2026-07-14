@@ -3,10 +3,13 @@
 BLIP helps battery researchers search, organize, summarize, and compare
 recent battery electrolyte papers.
 
-**Status:** literature search (`GET /api/search`, Semantic Scholar with
-automatic OpenAlex fallback), AI paper analysis (`POST /api/v1/analyze`),
-and the AI comparison engine (`POST /api/v1/compare`) are implemented.
-Neither is wired into the frontend yet — see
+**Status:** literature search (Semantic Scholar with automatic OpenAlex
+fallback), AI paper analysis, an AI comparison engine, and Excel export of
+selected papers (summary + experimental conditions + AI summary +
+cross-paper comparison, styled with openpyxl) are all implemented and
+wired together — select papers in the search results grid and export them
+to get a full AI-analyzed report. The paper detail page's own "Quick
+Summary" cards are still static placeholders, though — see
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full list of design
 decisions and what's intentionally missing so far.
 
@@ -69,6 +72,9 @@ of `{"title": "...", "abstract": "..."}` (requires `OPENAI_API_KEY` in `.env`)
 AI comparison: `POST http://localhost:8000/api/v1/compare` with a JSON body of
 `{"analyses": [...]}` — at least `COMPARISON_MIN_PAPERS` (default 10) results
 from `/analyze`
+Excel export: `POST http://localhost:8000/api/v1/export` with a JSON body of
+`{"papers": [...]}` (search results) — analyzes and, if enough succeed,
+compares them, then returns a 4-sheet `.xlsx` file
 
 Run tests:
 
@@ -103,7 +109,8 @@ a production deployment setup — see `docs/ARCHITECTURE.md`.
 - [x] Literature search (`GET /api/search`, Semantic Scholar + OpenAlex fallback)
 - [x] AI paper analysis (`POST /api/v1/analyze`, OpenAI Responses API)
 - [x] AI comparison engine (`POST /api/v1/compare`)
-- [ ] Wire AI analysis/comparison into the frontend
+- [x] Excel export of selected papers (`POST /api/v1/export`, openpyxl)
+- [ ] Wire AI analysis/comparison into the paper detail page itself
 - [ ] Persisting/organizing searched papers (ingestion into the `papers` table)
 - [ ] PostgreSQL migration + Alembic
 - [ ] Production Docker build
