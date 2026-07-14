@@ -72,6 +72,18 @@ decisions and what's intentionally missing so far.
 
 ## Getting started
 
+### Quick start (one command)
+
+```bash
+./run.sh          # macOS / Linux
+run.bat           # Windows
+```
+
+Sets up both the backend virtualenv and frontend `node_modules` on first
+run (copying `.env.example` → `.env` for each if missing), then starts the
+backend on :8000 and the frontend on :5173. On `run.sh`, Ctrl+C stops both
+servers; on `run.bat`, each server runs in its own window.
+
 ### Backend
 
 ```bash
