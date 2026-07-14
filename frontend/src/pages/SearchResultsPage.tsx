@@ -23,7 +23,7 @@ export default function SearchResultsPage() {
     setError(null);
     getSearch(searchId)
       .then(setData)
-      .catch((err) => setError(err instanceof Error ? err.message : "Failed to load search."))
+      .catch((err) => setError(err instanceof Error ? err.message : "검색 결과를 불러오지 못했습니다."))
       .finally(() => setLoading(false));
   }, [searchId]);
 
@@ -34,7 +34,7 @@ export default function SearchResultsPage() {
       const response = await searchPapers(keyword);
       navigate(`/search/${response.search_id}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Search failed. Please try again.");
+      setError(err instanceof Error ? err.message : "검색에 실패했습니다. 다시 시도해주세요.");
     } finally {
       setSearching(false);
     }
@@ -44,14 +44,17 @@ export default function SearchResultsPage() {
     <div className="results-page">
       <SearchBar initialValue={data?.keyword} loading={searching} onSubmit={handleNewSearch} />
 
-      {loading && <Loading message="Loading results..." />}
+      {loading && <Loading message="결과를 불러오는 중입니다..." />}
       {error && <ErrorMessage message={error} />}
 
       {data && !loading && (
         <>
           <h2 className="results-heading">
-            Top {data.results.length} papers for <span>&ldquo;{data.keyword}&rdquo;</span>
+            <span>&ldquo;{data.keyword}&rdquo;</span>에 대한 상위 {data.results.length}개 논문
           </h2>
+          {data.expanded_query && (
+            <p className="results-expanded-query">검색어 확장: {data.expanded_query}</p>
+          )}
           <div className="paper-card-list">
             {data.results.map((paper) => (
               <PaperCard key={paper.result_id} paper={paper} />

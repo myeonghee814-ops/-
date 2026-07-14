@@ -32,5 +32,6 @@ export interface PaperDetail extends PaperCard {
 export interface SearchResponse {
   search_id: number;
   keyword: string;
+  expanded_query: string;
   results: PaperCard[];
 }

@@ -9,7 +9,7 @@ export default function App() {
     <div className="app">
       <header className="app-header">
         <Link to="/" className="brand">
-          BLIP <span className="brand-sub">Battery Literature Intelligence Platform</span>
+          BLIP <span className="brand-sub">배터리 문헌 인텔리전스 플랫폼</span>
         </Link>
       </header>
       <main className="app-main">

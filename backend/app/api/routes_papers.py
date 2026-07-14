@@ -13,5 +13,5 @@ router = APIRouter(prefix="/api/results", tags=["papers"])
 def get_result_detail(result_id: int, db: Session = Depends(get_db)) -> PaperDetail:
     result = db.get(SearchResult, result_id)
     if result is None:
-        raise HTTPException(status_code=404, detail="Result not found")
+        raise HTTPException(status_code=404, detail="해당 논문 결과를 찾을 수 없습니다.")
     return to_paper_detail(result)

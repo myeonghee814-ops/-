@@ -18,23 +18,23 @@ export default function HomePage() {
       const response = await searchPapers(keyword);
       navigate(`/search/${response.search_id}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Search failed. Please try again.");
+      setError(err instanceof Error ? err.message : "검색에 실패했습니다. 다시 시도해주세요.");
       setLoading(false);
     }
   }
 
   return (
     <div className="home-page">
-      <h1 className="home-title">Find the right battery papers, not just the first ten.</h1>
+      <h1 className="home-title">첫 10개가 아닌, 가장 관련성 높은 배터리 논문을 찾아드립니다.</h1>
       <p className="home-subtitle">
-        Enter a keyword. BLIP searches the literature, then an AI re-ranks and analyzes
-        results like a senior battery researcher would.
+        키워드를 한글 또는 영어로 입력하세요. BLIP이 문헌을 검색하고, AI가 배터리
+        연구자처럼 논문을 재순위화하고 분석합니다.
       </p>
 
       <SearchBar onSubmit={handleSearch} loading={loading} />
 
       {loading && (
-        <Loading message="Searching literature and running AI relevance ranking... this can take up to a minute." />
+        <Loading message="문헌을 검색하고 AI 관련도 분석을 실행하는 중입니다... 최대 1분 정도 걸릴 수 있습니다." />
       )}
       {error && <ErrorMessage message={error} />}
     </div>

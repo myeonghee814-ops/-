@@ -5,7 +5,7 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000
 async function handleResponse<T>(res: Response): Promise<T> {
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.detail ?? `Request failed with status ${res.status}`);
+    throw new Error(body.detail ?? `요청이 실패했습니다. (상태 코드: ${res.status})`);
   }
   return res.json() as Promise<T>;
 }

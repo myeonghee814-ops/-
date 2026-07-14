@@ -7,10 +7,10 @@ interface SearchBarProps {
 }
 
 const EXAMPLE_KEYWORDS = [
-  "NCA electrolyte additive",
-  "silicon anode SEI",
-  "solid-state electrolyte lithium metal",
-  "high-nickel cathode cycling stability",
+  "NCA 전해액 첨가제",
+  "실리콘 음극 SEI",
+  "LiFSI 고농도 전해질",
+  "하이니켈 양극 사이클 안정성",
 ];
 
 export default function SearchBar({ initialValue = "", loading = false, onSubmit }: SearchBarProps) {
@@ -30,14 +30,14 @@ export default function SearchBar({ initialValue = "", loading = false, onSubmit
         <input
           type="text"
           className="search-input"
-          placeholder="e.g. NCA electrolyte additive"
+          placeholder="예: NCA 전해액 첨가제"
           value={keyword}
           onChange={(e) => setKeyword(e.target.value)}
           disabled={loading}
           autoFocus
         />
         <button type="submit" className="search-button" disabled={loading || keyword.trim().length < 2}>
-          {loading ? "Searching..." : "Search"}
+          {loading ? "검색 중..." : "검색"}
         </button>
       </form>
       <div className="example-keywords">

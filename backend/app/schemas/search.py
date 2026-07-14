@@ -10,4 +10,5 @@ class SearchRequest(BaseModel):
 class SearchResponse(BaseModel):
     search_id: int
     keyword: str
+    expanded_query: str
     results: list[PaperCard]

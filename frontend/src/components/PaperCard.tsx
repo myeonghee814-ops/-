@@ -14,13 +14,13 @@ export default function PaperCard({ paper }: { paper: PaperCardData }) {
 
       <h3 className="paper-card-title">{paper.title}</h3>
       <p className="paper-card-meta">
-        {paper.authors} &middot; {paper.journal || "Unknown journal"}
+        {paper.authors} &middot; {paper.journal || "저널 정보 없음"}
         {paper.year ? ` · ${paper.year}` : ""}
       </p>
       {paper.doi && <p className="paper-card-doi">DOI: {paper.doi}</p>}
 
       <div className="paper-card-why">
-        <span className="paper-card-why-label">Why this paper</span>
+        <span className="paper-card-why-label">AI 추천 이유</span>
         <p>{paper.why_selected}</p>
       </div>
 

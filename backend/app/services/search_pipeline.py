@@ -1,6 +1,7 @@
 """Orchestrates the full pipeline:
 
-Keyword -> PubMed search -> AI re-ranking -> battery metadata extraction
+Keyword (Korean/English/shorthand) -> AI query expansion -> PubMed search
+-> AI re-ranking (Korean reasoning) -> battery metadata extraction (Korean)
 -> persisted SearchQuery/SearchResult/Paper rows.
 """
 
@@ -30,11 +31,11 @@ async def _get_or_create_paper(db: Session, candidate: pubmed_service.Candidate)
 
     if not paper.is_extracted:
         analysis = await ai_service.extract_battery_analysis(paper.title, paper.abstract)
-        paper.cathode = analysis.get("cathode", "Not specified")
-        paper.anode = analysis.get("anode", "Not specified")
-        paper.electrolyte = analysis.get("electrolyte", "Not specified")
-        paper.voltage_window = analysis.get("voltage_window", "Not specified")
-        paper.cell_type = analysis.get("cell_type", "Not specified")
+        paper.cathode = analysis.get("cathode", "정보 없음")
+        paper.anode = analysis.get("anode", "정보 없음")
+        paper.electrolyte = analysis.get("electrolyte", "정보 없음")
+        paper.voltage_window = analysis.get("voltage_window", "정보 없음")
+        paper.cell_type = analysis.get("cell_type", "정보 없음")
         paper.experimental_conditions = analysis.get("experimental_conditions", "")
         paper.performance_summary = analysis.get("performance_summary", "")
         paper.innovation = analysis.get("innovation", "")
@@ -53,14 +54,16 @@ async def run_search(db: Session, keyword: str) -> SearchQuery:
     (ordered by rank, best first).
     """
 
-    candidates = await pubmed_service.search_candidates(keyword)
+    english_query, _expanded_terms = await ai_service.expand_search_query(keyword)
+
+    candidates = await pubmed_service.search_candidates(english_query)
     if not candidates:
-        raise ValueError(f"No papers found on PubMed for keyword: {keyword!r}")
+        raise ValueError(f"'{keyword}'에 대한 논문을 찾을 수 없습니다.")
 
     ranked = await ai_service.rerank_candidates(keyword, candidates)
     top = ranked[: settings.top_n_results]
 
-    search_query = SearchQuery(keyword=keyword)
+    search_query = SearchQuery(keyword=keyword, expanded_query=english_query)
     db.add(search_query)
     db.flush()
 

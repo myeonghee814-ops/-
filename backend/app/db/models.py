@@ -59,6 +59,7 @@ class SearchQuery(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     keyword: Mapped[str] = mapped_column(String, index=True)
+    expanded_query: Mapped[str] = mapped_column(String, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
 
     results: Mapped[list["SearchResult"]] = relationship(

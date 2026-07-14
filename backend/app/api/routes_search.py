@@ -23,6 +23,7 @@ async def create_search(request: SearchRequest, db: Session = Depends(get_db)) -
     return SearchResponse(
         search_id=search_query.id,
         keyword=search_query.keyword,
+        expanded_query=search_query.expanded_query,
         results=[to_paper_card(r) for r in search_query.results],
     )
 
@@ -31,10 +32,11 @@ async def create_search(request: SearchRequest, db: Session = Depends(get_db)) -
 def get_search(search_id: int, db: Session = Depends(get_db)) -> SearchResponse:
     search_query = db.get(SearchQuery, search_id)
     if search_query is None:
-        raise HTTPException(status_code=404, detail="Search not found")
+        raise HTTPException(status_code=404, detail="검색 결과를 찾을 수 없습니다.")
 
     return SearchResponse(
         search_id=search_query.id,
         keyword=search_query.keyword,
+        expanded_query=search_query.expanded_query,
         results=[to_paper_card(r) for r in search_query.results],
     )
