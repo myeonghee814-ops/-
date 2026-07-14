@@ -41,6 +41,10 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str | None = None
     OPENAI_MODEL: str = "gpt-4o-mini"
 
+    # Minimum analyzed papers required before the comparison engine will run
+    # (services/comparison_service.py).
+    COMPARISON_MIN_PAPERS: int = 10
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

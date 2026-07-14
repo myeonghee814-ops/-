@@ -4,9 +4,9 @@ BLIP helps battery researchers search, organize, summarize, and compare
 recent battery electrolyte papers.
 
 **Status:** literature search (`GET /api/search`, Semantic Scholar with
-automatic OpenAlex fallback) and AI paper analysis (`POST /api/v1/analyze`,
-OpenAI Responses API) are implemented. The analysis endpoint isn't wired
-into the frontend yet, and cross-paper comparison isn't built — see
+automatic OpenAlex fallback), AI paper analysis (`POST /api/v1/analyze`),
+and the AI comparison engine (`POST /api/v1/compare`) are implemented.
+Neither is wired into the frontend yet — see
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full list of design
 decisions and what's intentionally missing so far.
 
@@ -66,6 +66,9 @@ Health check: http://localhost:8000/api/v1/health
 Literature search: http://localhost:8000/api/search?keyword=electrolyte&year_from=2020&year_to=2024&limit=10
 AI paper analysis: `POST http://localhost:8000/api/v1/analyze` with a JSON body
 of `{"title": "...", "abstract": "..."}` (requires `OPENAI_API_KEY` in `.env`)
+AI comparison: `POST http://localhost:8000/api/v1/compare` with a JSON body of
+`{"analyses": [...]}` — at least `COMPARISON_MIN_PAPERS` (default 10) results
+from `/analyze`
 
 Run tests:
 
@@ -99,8 +102,8 @@ a production deployment setup — see `docs/ARCHITECTURE.md`.
 
 - [x] Literature search (`GET /api/search`, Semantic Scholar + OpenAlex fallback)
 - [x] AI paper analysis (`POST /api/v1/analyze`, OpenAI Responses API)
-- [ ] Wire AI analysis into the paper detail page's "Quick Summary" cards
+- [x] AI comparison engine (`POST /api/v1/compare`)
+- [ ] Wire AI analysis/comparison into the frontend
 - [ ] Persisting/organizing searched papers (ingestion into the `papers` table)
-- [ ] Paper comparison views (AG Grid)
 - [ ] PostgreSQL migration + Alembic
 - [ ] Production Docker build

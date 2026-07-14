@@ -1,9 +1,10 @@
 # BLIP Architecture
 
 This document explains the design decisions behind the project. Literature
-search (`GET /api/search`) and AI paper analysis (`POST /api/v1/analyze`) are
-implemented; persisting/organizing papers and cross-paper comparison are not
-yet — this describes the scaffolding those remaining features will be built on.
+search (`GET /api/search`), AI paper analysis (`POST /api/v1/analyze`), and
+the AI comparison engine (`POST /api/v1/compare`) are implemented;
+persisting/organizing papers is not — this describes the scaffolding that
+remaining feature will be built on.
 
 ## Layering (backend)
 
@@ -169,6 +170,49 @@ cards (`frontend/src/pages/PaperDetailPage.tsx`) still show static
 "not analyzed yet" placeholders. Calling this endpoint from the UI (e.g. an
 "Analyze" button + a TanStack Query mutation) is a separate follow-up.
 
+## AI comparison engine (`POST /api/v1/compare`)
+
+Input: a batch of already-analyzed papers — `schemas/comparison.py::ComparisonRequest`
+takes `{"analyses": [PaperAnalysis, ...]}`, i.e. output of `/api/v1/analyze`
+called once per paper. Output: `ComparisonResult` — common experimental
+conditions, differences, frequently used electrolytes/additives, most
+common cathode/anode, research trend, research gap, potential future
+direction, and a `comparison_table` (one row per input paper: title,
+electrolyte, cathode, anode, separator, cell type, voltage window,
+temperature) for scanning papers side by side.
+
+**"After 10 papers are analyzed, automatically compare them" — how the batch
+size is enforced without persistence.** There's no server-side tracking of
+"papers analyzed so far" yet (see "not yet here" below), so this isn't a
+background job that fires on a counter. Instead, `services/comparison_service.py`
+enforces `settings.COMPARISON_MIN_PAPERS` (default 10) as a precondition: submit
+a batch of at least that many analyses and the comparison runs immediately as
+part of that same request — no separate "run comparison now" step. Below the
+threshold it raises `InsufficientAnalysesError` (→ HTTP 422 with a message
+stating how many were provided vs. required). If a real "analyze 10 papers
+over time, then auto-trigger" workflow is wanted later, that requires adding
+persistence for analyses first (tracking count, associating results with a
+research session) — a bigger change than this endpoint, deliberately deferred
+along with the rest of persistence.
+
+**The comparison itself is AI-generated, not counted client-side.** Rather
+than computing "most common cathode" by tallying exact string matches
+ourselves (which would miss that "1M LiPF6" and "LiPF6" describe the same
+salt), the entire `ComparisonResult` — including the table — comes from one
+OpenAI Responses API call over the batch's already-extracted fields, using
+the same strict JSON-schema structured-output approach as `/analyze`
+(`services/external/openai_client.py::compare_papers`, sharing its request
+plumbing with `analyze` via a private `_request_structured_json` helper).
+The one exception: `paper_count` is overwritten with the real `len(analyses)`
+after parsing, rather than trusted from the model, since that's ground truth
+we already have.
+
+**Feeding structured data back into the model, not raw text.** The
+comparison prompt (`prompts/paper_comparison.py`) receives each paper's
+already-extracted `PaperAnalysis` fields as JSON, not the original
+abstracts — this keeps the comparison call cheap (no re-processing raw
+text) and lets the model focus purely on cross-paper synthesis.
+
 ## Docker
 
 Each service has its own `Dockerfile`; the root `docker-compose.yml` runs
@@ -183,8 +227,9 @@ out in `docker-compose.yml` until the project needs it.
 
 - No persistence of search results or analyses (both are live-only; nothing
   is written to the `papers` table yet — that's a separate "ingestion" concern)
-- No frontend wiring for AI analysis yet (see above)
-- No cross-paper comparison
+- No frontend wiring for AI analysis or comparison yet (see above)
+- No automatic server-side trigger that counts analyses over time and fires
+  the comparison on its own — the caller supplies the batch (see above)
 - No auth/user accounts
 - No Alembic migrations (SQLite schema is created ad hoc during this
   scaffolding phase; Alembic should be introduced alongside the first real
