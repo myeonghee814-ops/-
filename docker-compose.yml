@@ -2,6 +2,7 @@ services:
   backend:
     build:
       context: ./backend
+      target: development
     ports:
       - "8000:8000"
     volumes:
@@ -14,6 +15,7 @@ services:
   frontend:
     build:
       context: ./frontend
+      target: development
     ports:
       - "5173:5173"
     volumes:
@@ -26,6 +28,7 @@ services:
     depends_on:
       - backend
 
-# PostgreSQL is deferred until the project moves off SQLite. When needed,
-# add a `db` service here and point backend/.env's DATABASE_URL at it —
-# no application code changes required.
+# This is local development only (hot reload, SQLite, no Postgres, no
+# migrations run automatically). For a production-shaped stack (Postgres,
+# gunicorn, nginx, migrations-on-start), see docker-compose.prod.yml and
+# docs/ARCHITECTURE.md.

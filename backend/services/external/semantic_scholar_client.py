@@ -9,6 +9,7 @@ SemanticScholarError for the caller to handle.
 import httpx
 
 from core.config import get_settings
+from core.http_clients import get_http_client
 from schemas.search import PaperResult
 from services.external.exceptions import SemanticScholarError
 
@@ -30,10 +31,10 @@ async def search(keyword: str, year_from: int | None, year_to: int | None, limit
     headers = {"x-api-key": settings.SEMANTIC_SCHOLAR_API_KEY} if settings.SEMANTIC_SCHOLAR_API_KEY else {}
 
     try:
-        async with httpx.AsyncClient(timeout=settings.EXTERNAL_API_TIMEOUT_SECONDS) as client:
-            response = await client.get(_BASE_URL, params=params, headers=headers)
-            response.raise_for_status()
-            payload = response.json()
+        client = get_http_client()
+        response = await client.get(_BASE_URL, params=params, headers=headers)
+        response.raise_for_status()
+        payload = response.json()
     except httpx.HTTPError as exc:
         raise SemanticScholarError(f"Semantic Scholar request failed: {exc}") from exc
 

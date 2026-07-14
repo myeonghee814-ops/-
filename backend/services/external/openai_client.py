@@ -8,10 +8,11 @@ assemble prompt content and never touch the OpenAI SDK directly.
 
 import json
 
-from openai import APIError, AsyncOpenAI
+from openai import APIError
 from pydantic import ValidationError
 
 from core.config import get_settings
+from core.http_clients import get_openai_client
 from schemas.analysis import PaperAnalysis
 from schemas.comparison import ComparisonResult
 from services.external.exceptions import OpenAIAnalysisError
@@ -137,7 +138,7 @@ async def _request_structured_json(system_prompt: str, user_content: str, schema
     if not settings.OPENAI_API_KEY:
         raise OpenAIAnalysisError("OPENAI_API_KEY is not configured")
 
-    client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY, timeout=settings.EXTERNAL_API_TIMEOUT_SECONDS)
+    client = get_openai_client()
 
     try:
         response = await client.responses.create(

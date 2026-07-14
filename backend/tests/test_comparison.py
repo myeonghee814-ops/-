@@ -121,7 +121,7 @@ async def test_openai_client_compare_papers_parses_valid_response(monkeypatch: p
     fake_client = SimpleNamespace(responses=SimpleNamespace(create=AsyncMock(return_value=fake_response)))
 
     monkeypatch.setattr(openai_client, "get_settings", lambda: _fake_openai_settings())
-    monkeypatch.setattr(openai_client, "AsyncOpenAI", lambda **kwargs: fake_client)
+    monkeypatch.setattr(openai_client, "get_openai_client", lambda: fake_client)
 
     result = await openai_client.compare_papers("system prompt", "user content")
 
@@ -135,7 +135,7 @@ async def test_openai_client_compare_papers_raises_on_invalid_json(monkeypatch: 
     fake_client = SimpleNamespace(responses=SimpleNamespace(create=AsyncMock(return_value=fake_response)))
 
     monkeypatch.setattr(openai_client, "get_settings", lambda: _fake_openai_settings())
-    monkeypatch.setattr(openai_client, "AsyncOpenAI", lambda **kwargs: fake_client)
+    monkeypatch.setattr(openai_client, "get_openai_client", lambda: fake_client)
 
     with pytest.raises(OpenAIAnalysisError):
         await openai_client.compare_papers("system", "user")

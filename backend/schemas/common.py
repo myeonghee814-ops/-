@@ -7,3 +7,10 @@ class HealthResponse(BaseModel):
     status: str
     app_name: str
     environment: str
+
+
+class ReadinessResponse(BaseModel):
+    """Response body for the readiness check endpoint."""
+
+    status: str
+    database: str

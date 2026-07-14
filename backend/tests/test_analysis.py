@@ -83,7 +83,7 @@ async def test_openai_client_parses_valid_response(monkeypatch: pytest.MonkeyPat
     fake_client = SimpleNamespace(responses=SimpleNamespace(create=AsyncMock(return_value=fake_response)))
 
     monkeypatch.setattr(openai_client, "get_settings", lambda: _fake_settings())
-    monkeypatch.setattr(openai_client, "AsyncOpenAI", lambda **kwargs: fake_client)
+    monkeypatch.setattr(openai_client, "get_openai_client", lambda: fake_client)
 
     result = await openai_client.analyze("system prompt", "user content")
 
@@ -105,7 +105,7 @@ async def test_openai_client_raises_on_invalid_json(monkeypatch: pytest.MonkeyPa
     fake_client = SimpleNamespace(responses=SimpleNamespace(create=AsyncMock(return_value=fake_response)))
 
     monkeypatch.setattr(openai_client, "get_settings", lambda: _fake_settings())
-    monkeypatch.setattr(openai_client, "AsyncOpenAI", lambda **kwargs: fake_client)
+    monkeypatch.setattr(openai_client, "get_openai_client", lambda: fake_client)
 
     with pytest.raises(OpenAIAnalysisError):
         await openai_client.analyze("system", "user")

@@ -10,6 +10,9 @@ venv/
 backend/*.db
 backend/.env
 
+# Root-level compose env file (docker-compose.prod.yml secrets)
+/.env
+
 # Frontend
 frontend/node_modules/
 frontend/dist/

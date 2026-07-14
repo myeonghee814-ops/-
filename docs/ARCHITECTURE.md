@@ -3,8 +3,13 @@
 This document explains the design decisions behind the project. Literature
 search (`GET /api/search`), AI paper analysis (`POST /api/v1/analyze`), the
 AI comparison engine (`POST /api/v1/compare`), and Excel export
-(`POST /api/v1/export`) are implemented; persisting/organizing papers is
-not — this describes the scaffolding that remaining feature will be built on.
+(`POST /api/v1/export`) are implemented, and the project has a
+production-shaped deployment path: multi-stage Docker images, a Postgres +
+Alembic migration path, structured logging, request tracing, Prometheus
+metrics, and authentication scaffolding (see the relevant sections below).
+Persisting/organizing papers and real user authentication are not
+implemented — this describes the scaffolding those remaining features
+will be built on.
 
 ## Layering (backend)
 
@@ -15,7 +20,9 @@ services/external/ Provider-specific API clients (Semantic Scholar, OpenAlex, Op
 models/            SQLAlchemy ORM models — the persistence shape
 schemas/           Pydantic models — the API contract shape
 database/          Engine/session lifecycle, declarative base
-core/              Cross-cutting concerns: settings, logging, caching
+core/              Cross-cutting concerns: settings, logging, middleware,
+                   metrics, caching, shared HTTP clients, security helpers
+alembic/           Database migrations (see "Async SQLAlchemy..." below)
 prompts/           LLM prompt templates, kept as data separate from services/
 utils/             Small stateless helpers with no business meaning of their own
 ```
@@ -31,14 +38,39 @@ returns ORM objects that FastAPI serializes via a Pydantic schema
   services hold logic that will grow substantially once literature
   search/summarization is implemented, without bloating route handlers.
 
-## Why async SQLAlchemy + SQLite now, Postgres later
+## Async SQLAlchemy + SQLite now, Postgres via Alembic in production
 
 `DATABASE_URL` is the only thing that changes between environments
 (`sqlite+aiosqlite:///./blip.db` locally, `postgresql+asyncpg://...` in
-production) because the codebase only ever talks to SQLAlchemy's async
-engine/session API, never to a driver directly. Async is used from the
-start (`AsyncSession`, `async def` routes) so adopting Postgres later is a
-config change, not a rewrite of every endpoint.
+production — `asyncpg` is already in `requirements.txt`) because the
+codebase only ever talks to SQLAlchemy's async engine/session API, never
+to a driver directly. Async is used from the start (`AsyncSession`,
+`async def` routes) so adopting Postgres is a config change, not a rewrite
+of every endpoint. `docker-compose.prod.yml` runs a real `postgres:16-alpine`
+service; the dev compose file still uses SQLite, and both are exercised by
+the same application code unchanged.
+
+**Alembic** (`backend/alembic/`) manages schema changes for whichever
+database `DATABASE_URL` points at. `alembic/env.py` is customized in two
+ways from the generated template: it pulls the connection URL from the
+app's own `Settings` (`get_settings().DATABASE_URL`) instead of a
+hardcoded value in `alembic.ini`, so migrations always run against
+whatever database the app itself is configured for; and it imports every
+model module (`models/paper.py`, `models/user.py`) so `Base.metadata` is
+fully populated before `--autogenerate` compares against it. The initial
+migration (`alembic/versions/..._initial_schema.py`) was generated via
+`alembic revision --autogenerate` against a real (empty) SQLite database,
+then verified: `alembic upgrade head` creates both tables, `alembic
+downgrade base` cleanly drops them, and `alembic check` reports zero drift
+against the current models. (Verified against SQLite in this environment;
+a live Postgres container wasn't reachable here — no Docker daemon — but
+nothing in the migration or `DATABASE_URL` handling is SQLite-specific.)
+
+In production, `backend/entrypoint.sh` runs `alembic upgrade head` before
+starting the server (see "Docker" below) — fine for a single instance, but
+if this ever scales to multiple replicas deploying at once, that step
+should move to a separate one-off job so replicas don't race to migrate
+concurrently.
 
 ## Configuration: pydantic-settings
 
@@ -55,13 +87,76 @@ override it. This gives:
 `get_settings()` is `lru_cache`d so the `.env` file is parsed once per
 process and can be swapped for a FastAPI dependency override in tests.
 
-## Logging
+## Logging, request tracing, and metrics
 
 `core/logging.py` configures the root logger once, at import time in
 `main.py`, via `logging.config.dictConfig`. Every module then just calls
-`logging.getLogger(__name__)` and inherits consistent formatting — no
-per-module handler setup, and `LOG_LEVEL` is an env var like everything
-else.
+`logging.getLogger(__name__)` and inherits consistent formatting.
+`LOG_FORMAT` switches between two formatters, both driven by the same env
+var mechanism as everything else in `core/config.py`:
+
+- `text` (default): human-readable, for local development.
+- `json`: one JSON object per line (`core/logging.py::JsonFormatter`),
+  because production log aggregators (CloudWatch, Datadog, ELK, ...) parse
+  structured logs far more reliably than formatted text. Any `extra={...}`
+  fields a caller attaches (e.g. `request_id`) are included automatically.
+
+`core/middleware.py::RequestContextMiddleware` wraps every request: it
+assigns a request ID (reusing an inbound `X-Request-ID` header if a proxy
+already set one, so the ID survives a hop), logs method/path/status/duration
+for every request tagged with that ID, and echoes it back as a response
+header. This is a structured, app-level complement to uvicorn/gunicorn's
+own access logs — the shared ID is what lets a specific user-reported
+error be found in server logs.
+
+The same middleware records two Prometheus metrics (`core/metrics.py`):
+`http_requests_total` (counter, labeled by method/path/status) and
+`http_request_duration_seconds` (histogram, labeled by method/path).
+Labels use the *matched route's path template* (e.g. `/paper/{id}`) rather
+than the raw resolved URL, specifically so a future endpoint with a path
+parameter can't explode metric cardinality by generating one label per
+distinct ID ever requested.
+
+## Monitoring: `/metrics` and `/api/v1/health/ready`
+
+`/metrics` is a plain ASGI app (`prometheus_client.make_asgi_app()`)
+mounted directly in `main.py`, not a FastAPI route. This project initially
+tried the higher-level `prometheus-fastapi-instrumentator` wrapper package,
+but its latest release requires Starlette 1.x while this project's FastAPI
+pin requires Starlette <0.47 — a real, current dependency conflict, not a
+hypothetical one (`pip install prometheus-fastapi-instrumentator` visibly
+broke the app in this environment). `prometheus_client` itself has no such
+coupling, so instrumenting manually via the middleware above sidesteps the
+conflict entirely and is barely more code.
+
+Two separate health endpoints, deliberately not merged into one:
+
+- `GET /api/v1/health` — pure liveness. No dependencies (no DB, no
+  external calls), so it can never report unhealthy for a reason outside
+  the process's own control. This is what should back a container
+  orchestrator's "is this process alive, or does it need a restart" check.
+- `GET /api/v1/health/ready` — readiness. Runs `SELECT 1` against the
+  database and returns 503 if that fails. This is what should gate
+  traffic/rollout (a Kubernetes readinessProbe, a load balancer's health
+  check) — an instance can be alive but not yet able to serve real
+  requests (e.g. DB still starting up), and conflating the two checks
+  would either restart a healthy-but-not-ready process unnecessarily or
+  route traffic to an instance that can't yet serve it.
+
+## Shared HTTP/OpenAI clients (`core/http_clients.py`)
+
+Every external client (`services/external/*.py`) used to open a brand-new
+`httpx.AsyncClient` or `AsyncOpenAI` instance — and therefore pay for a
+fresh TCP/TLS handshake — on every single call. That's most costly exactly
+where it matters most: the export pipeline analyzing a dozen papers
+concurrently used to open a dozen separate OpenAI connections instead of
+reusing a warm pool. `get_http_client()`/`get_openai_client()` are lazy
+module-level singletons (connection-pooled via `httpx.Limits`), created on
+first use and closed once via `aclose_all()` in `main.py`'s `lifespan` on
+shutdown. This is the main "optimize the API" change in this pass, along
+with `GZipMiddleware` (main.py) compressing responses over 500 bytes —
+worthwhile given how large the search/analysis/comparison JSON payloads
+can get.
 
 ## CORS
 
@@ -261,15 +356,93 @@ by its own per-paper table — `freeze_panes` is set below *that* table's
 header rather than at row 1, since that's the part of the sheet actually
 long enough to need it.
 
+## Authentication placeholders (`core/security.py`, `models/user.py`) — no login yet
+
+Nothing in the app requires a caller to be authenticated. No route depends
+on a user; no signup/login flow exists. What does exist is the scaffolding
+a real auth flow will need, written and tested ahead of time rather than
+improvised later under pressure:
+
+- **`models/user.py`** — a `User` table (email, hashed_password, is_active,
+  is_superuser). Structural only; nothing writes to it.
+- **`schemas/user.py`** — `UserCreate`/`UserRead` placeholder schemas, not
+  exposed by any endpoint. `UserRead` deliberately excludes
+  `hashed_password` so it can never leave the persistence layer even by
+  accident once it is wired up.
+- **`core/security.py`** — password hashing (`hash_password`/
+  `verify_password`) and JWT helpers (`create_access_token`/
+  `decode_access_token`). Uses `bcrypt` directly rather than `passlib`:
+  `passlib` is effectively unmaintained, and its bcrypt-version-detection
+  code raises against current `bcrypt` releases (it looks for a
+  `bcrypt.__about__` attribute recent `bcrypt` no longer exposes) — a real
+  failure hit while building this, not a hypothetical one, same story as
+  the Prometheus wrapper package above.
+- **`api/deps.py::get_current_user`** — an `OAuth2PasswordBearer`-based
+  dependency, pointed at the `/auth/token` stub below. Unconditionally
+  raises 501 if anything ever calls it, since there's no valid token it
+  could accept yet. No route currently depends on it, so its behavior is
+  inert today; wiring up a route later means adding
+  `Depends(get_current_user)` and replacing the 501 with a real decode +
+  DB lookup + 401-on-invalid.
+- **`api/routes/auth.py`** — `POST /auth/token` also just raises 501. It
+  exists so the shape of the future login endpoint (OAuth2 password grant)
+  is visible in the OpenAPI schema ahead of time.
+- **`SECRET_KEY`/`ALGORITHM`/`ACCESS_TOKEN_EXPIRE_MINUTES`** in
+  `core/config.py` back the JWT helpers above. The default `SECRET_KEY` is
+  explicitly labeled insecure-for-dev-only; `docker-compose.prod.yml`
+  refuses to start without a real one set (see "Docker" below).
+
 ## Docker
 
-Each service has its own `Dockerfile`; the root `docker-compose.yml` runs
-both for local development with source mounted as a volume (live reload).
-The frontend image currently just runs `npm run dev` — a production
-multi-stage build (static `vite build` output served by nginx) is
-intentionally deferred to `docker/` until deployment is actually
-implemented, per project scope. A Postgres service is noted but commented
-out in `docker-compose.yml` until the project needs it.
+One `Dockerfile` per service, each with `development` and `production`
+build stages (selected via `target:` in whichever compose file is used) —
+this replaced the previous dev-only Dockerfiles now that deployment is
+actually being implemented.
+
+**Backend** (`backend/Dockerfile`): `development` mirrors the previous
+single-stage image (hot reload via `--reload`, runs as root, source
+bind-mounted over the image by `docker-compose.yml`). `production` adds a
+non-root user, serves via `gunicorn` with `uvicorn.workers.UvicornWorker`
+(worker count from the `WEB_CONCURRENCY` env var, which gunicorn reads
+natively — deliberately not a hardcoded `--workers` CLI flag, since an
+explicit flag always wins over the env var and would defeat the point of
+making it configurable per-deployment), and runs `backend/entrypoint.sh`
+(applies `alembic upgrade head`, then execs the server) rather than
+starting the server directly.
+
+**Frontend** (`frontend/Dockerfile`): `development` is the previous
+single-stage image (Vite dev server). `build` runs `npm run build`. `production`
+copies the static output into `nginx:1.27-alpine`. No `VITE_API_BASE_URL`/
+`VITE_API_ROOT_URL` build args are needed for the production image: both
+already default to relative paths (`src/services/apiClient.ts`), and
+`frontend/nginx.conf` reverse-proxies `/api/` to the `backend` service
+internally — same-origin in both dev (via Vite's proxy) and production (via
+nginx), so no production CORS configuration is needed beyond what already
+existed for local dev.
+
+**`docker-compose.yml`** (dev, unchanged in spirit): SQLite, hot reload,
+now explicitly `target: development` — important, because without an
+explicit target Docker builds the *last* stage defined in the Dockerfile,
+which is now `production`; leaving it unspecified would have silently
+broken local dev the moment the multi-stage Dockerfiles landed.
+
+**`docker-compose.prod.yml`** (new): adds a real `postgres:16-alpine`
+service (named volume, `pg_isready` healthcheck), builds both app images
+with `target: production`, and only publishes the frontend's port 80 to
+the host — the backend and database are reachable only over the internal
+Compose network, so nginx is the sole entry point. Required secrets
+(`POSTGRES_PASSWORD`, `CORS_ORIGINS`, `SECRET_KEY`) use Compose's
+`${VAR:?message}` syntax, which fails immediately with a clear message
+rather than silently starting with an empty/insecure value — verified via
+`docker compose -f docker-compose.prod.yml config` both with and without
+those variables set. These variables are resolved by Compose itself from
+a root-level `.env` (see `.env.prod.example`), which is distinct from
+`backend/.env`/`frontend/.env` (consumed inside the containers by the dev
+setup) — worth calling out since the two are easy to conflate.
+
+*(Both compose files were validated with `docker compose config` — this
+sandbox has the Docker CLI but no running daemon, so an actual `docker
+build`/`docker compose up` of these images wasn't possible here.)*
 
 ## What's deliberately not here yet
 
@@ -282,10 +455,16 @@ out in `docker-compose.yml` until the project needs it.
   batch) supplies the papers each time
 - No caching of AI analyses — exporting overlapping paper sets re-analyzes
   shared papers rather than reusing prior results
-- No auth/user accounts
-- No Alembic migrations (SQLite schema is created ad hoc during this
-  scaffolding phase; Alembic should be introduced alongside the first real
-  migration, once the schema stabilizes)
-- No production Docker/deployment pipeline
+- No real authentication — see "Authentication placeholders" above; no
+  route requires a caller to be logged in
+- No TLS termination/public ingress in `docker-compose.prod.yml` — put a
+  load balancer or reverse proxy in front of it that handles TLS
+- No CI/CD pipeline (tests/build are run manually)
+- No secrets manager integration — `docker-compose.prod.yml` takes secrets
+  from a root `.env`/the shell environment, which is fine for a single
+  host but not for a multi-host/team production setup
+- No rate limiting on any endpoint (relevant especially for the
+  AI-backed `/analyze`, `/compare`, `/export` endpoints, which cost real
+  money per call)
 
-These are out of scope for this skeleton by design.
+These are out of scope for this project's current stage by design.

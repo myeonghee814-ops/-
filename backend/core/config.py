@@ -27,6 +27,9 @@ class Settings(BaseSettings):
 
     LOG_LEVEL: str = "INFO"
 
+    # "text" for human-readable local logs; "json" for production log aggregators.
+    LOG_FORMAT: str = "text"
+
     # Optional: raises Semantic Scholar's shared-pool rate limit. Unauthenticated
     # requests work fine for development.
     SEMANTIC_SCHOLAR_API_KEY: str | None = None
@@ -44,6 +47,15 @@ class Settings(BaseSettings):
     # Minimum analyzed papers required before the comparison engine will run
     # (services/comparison_service.py).
     COMPARISON_MIN_PAPERS: int = 10
+
+    # --- Authentication placeholders (core/security.py, models/user.py) ---
+    # No login endpoint exists yet; these back the token-signing utilities
+    # that will be wired up once real auth is implemented. The default is
+    # fine for local dev but MUST be overridden with a real secret in any
+    # shared/production environment.
+    SECRET_KEY: str = "insecure-dev-secret-change-me"
+    ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
 
     model_config = SettingsConfigDict(
         env_file=".env",
