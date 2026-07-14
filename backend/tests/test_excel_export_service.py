@@ -28,6 +28,7 @@ def _analysis(i: int) -> PaperAnalysis:
         title=f"Paper {i}",
         authors=[f"Author {i}"],
         journal="Journal of Power Sources",
+        battery_system="Li-ion",
         electrolyte="1M LiPF6 in EC/DMC",
         salt="LiPF6",
         solvent="EC/DMC",
@@ -62,7 +63,18 @@ def _comparison(paper_count: int) -> ComparisonResult:
         research_gap="Limited high-temperature cycling data",
         potential_future_direction="Systematic study of additive combinations at elevated temperatures",
         comparison_table=[
-            ComparisonTableRow(title=f"Paper {i}", electrolyte="1M LiPF6 in EC/DMC", cathode="NMC811")
+            ComparisonTableRow(
+                title=f"Paper {i}",
+                electrolyte="1M LiPF6 in EC/DMC",
+                salt="LiPF6",
+                additive="FEC",
+                cathode="NMC811",
+                anode="Graphite",
+                cycle_condition="1C/1C, 25 C",
+                main_finding="Improved cycling stability",
+                advantages="Higher capacity retention",
+                limitations="Limited high-temperature data",
+            )
             for i in range(paper_count)
         ],
     )
@@ -75,7 +87,7 @@ def test_build_workbook_creates_four_sheets_in_order() -> None:
 
     wb = load_workbook(io.BytesIO(workbook_bytes))
 
-    assert wb.sheetnames == ["Summary Table", "Experimental Conditions", "AI Summary", "Comparison"]
+    assert wb.sheetnames == ["Paper Summary", "Experimental Conditions", "AI Summary", "Comparison"]
 
 
 def test_summary_sheet_has_expected_header_and_rows() -> None:
@@ -83,7 +95,7 @@ def test_summary_sheet_has_expected_header_and_rows() -> None:
     analyses = [_analysis(i) for i in range(3)]
     wb = load_workbook(io.BytesIO(build_workbook(papers, analyses, None, "note")))
 
-    ws = wb["Summary Table"]
+    ws = wb["Paper Summary"]
 
     assert [cell.value for cell in ws[1]] == [
         "Title",
@@ -91,13 +103,28 @@ def test_summary_sheet_has_expected_header_and_rows() -> None:
         "Journal",
         "Year",
         "Citations",
+        "Battery System",
+        "Electrolyte",
+        "Main Contribution",
         "DOI",
         "Published Date",
         "Abstract",
     ]
     assert ws.cell(row=2, column=1).value == "Paper 0"
-    assert ws.cell(row=2, column=6).value == "10.1234/paper.0"
+    assert ws.cell(row=2, column=6).value == "Li-ion"
+    assert ws.cell(row=2, column=7).value == "1M LiPF6 in EC/DMC"
+    assert ws.cell(row=2, column=8).value == "Novel additive combination"
+    assert ws.cell(row=2, column=9).value == "10.1234/paper.0"
     assert ws.max_row == 4  # header + 3 papers
+
+
+def test_summary_sheet_falls_back_gracefully_when_not_analyzed() -> None:
+    papers = [_paper(0)]
+    wb = load_workbook(io.BytesIO(build_workbook(papers, [None], None, "note")))
+
+    ws = wb["Paper Summary"]
+    assert ws.cell(row=2, column=6).value == "—"  # Battery System
+    assert ws.cell(row=2, column=8).value == "—"  # Main Contribution
 
 
 def test_header_row_is_frozen_and_styled() -> None:
@@ -105,7 +132,7 @@ def test_header_row_is_frozen_and_styled() -> None:
     analyses = [_analysis(0)]
     wb = load_workbook(io.BytesIO(build_workbook(papers, analyses, None, "note")))
 
-    ws = wb["Summary Table"]
+    ws = wb["Paper Summary"]
 
     assert ws.freeze_panes == "A2"
     header_cell = ws.cell(row=1, column=1)
@@ -119,8 +146,8 @@ def test_columns_are_auto_sized() -> None:
     analyses = [_analysis(0)]
     wb = load_workbook(io.BytesIO(build_workbook(papers, analyses, None, "note")))
 
-    ws = wb["Summary Table"]
-    for col_letter in ["A", "B", "C", "D", "E", "F", "G", "H"]:
+    ws = wb["Paper Summary"]
+    for col_letter in ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K"]:
         assert ws.column_dimensions[col_letter].width and ws.column_dimensions[col_letter].width > 0
 
 
@@ -172,6 +199,9 @@ def test_comparison_sheet_includes_findings_and_table_and_freezes_below_header()
     assert "NMC811" in values
     assert "Common Experimental Conditions" in values
     assert "• Most papers use LiPF6-based electrolytes" in values
+    assert "Salt" in values and "Cycle Condition" in values and "Main Finding" in values
+    assert "LiPF6" in values
+    assert "Improved cycling stability" in values
     # The per-paper table header should exist and be frozen below (not row 1,
     # since this sheet is a mixed report layout, not a single table).
     assert ws.freeze_panes is not None

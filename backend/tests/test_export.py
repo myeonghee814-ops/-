@@ -66,4 +66,4 @@ async def test_export_endpoint_returns_a_real_workbook_end_to_end(monkeypatch: p
 
     assert response.status_code == 200
     wb = load_workbook(io.BytesIO(response.content))
-    assert wb.sheetnames == ["Summary Table", "Experimental Conditions", "AI Summary", "Comparison"]
+    assert wb.sheetnames == ["Paper Summary", "Experimental Conditions", "AI Summary", "Comparison"]

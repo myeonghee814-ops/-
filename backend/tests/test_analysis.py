@@ -17,6 +17,7 @@ def _sample_analysis() -> PaperAnalysis:
         title="Example Paper",
         authors=["A. Author"],
         journal="Journal of Power Sources",
+        battery_system="Li-ion",
         electrolyte="1M LiPF6 in EC/DMC",
         salt="LiPF6",
         solvent="EC/DMC",
@@ -127,6 +128,7 @@ async def test_analyze_endpoint_returns_json(monkeypatch: pytest.MonkeyPatch) ->
     assert response.status_code == 200
     body = response.json()
     assert body["salt"] == "LiPF6"
+    assert body["battery_system"] == "Li-ion"
     assert body["advantages"] == ["Higher capacity retention", "Reduced gas generation"]
 
 

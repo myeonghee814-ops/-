@@ -13,6 +13,9 @@ Rules:
 - Only report information explicitly stated or clearly implied by the provided text.
 - If a field isn't discussed in the text, use null for a single-value field or an \
 empty array for a list field. Never invent or guess values.
+- "battery_system" is the overall battery chemistry class being studied, e.g. "Li-ion", \
+"Li-metal", "Na-ion", "K-ion", "Mg-ion", "Zn-ion", "Li-S", or "solid-state". Use the \
+closest standard classification; null if it truly can't be determined.
 - "main_findings", "advantages", "limitations", and "future_work" are short bullet-point \
 statements, not full paragraphs.
 - Respond with JSON only, matching the provided schema exactly. Do not include \

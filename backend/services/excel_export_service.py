@@ -53,12 +53,18 @@ _LIST_FIELDS = [
 _COMPARISON_TABLE_HEADERS = [
     "Title",
     "Electrolyte",
+    "Salt",
+    "Additive",
     "Cathode",
     "Anode",
     "Separator",
     "Cell Type",
     "Voltage Window",
     "Temperature",
+    "Cycle Condition",
+    "Main Finding",
+    "Advantages",
+    "Limitations",
 ]
 
 
@@ -72,7 +78,7 @@ def build_workbook(
     wb = Workbook()
     wb.remove(wb.active)
 
-    _build_summary_sheet(wb, papers)
+    _build_summary_sheet(wb, papers, analyses)
     _build_experimental_conditions_sheet(wb, papers, analyses)
     _build_ai_summary_sheet(wb, papers, analyses)
     _build_comparison_sheet(wb, comparison, comparison_note)
@@ -82,18 +88,33 @@ def build_workbook(
     return buffer.getvalue()
 
 
-def _build_summary_sheet(wb: Workbook, papers: list[PaperResult]) -> None:
-    ws = wb.create_sheet("Summary Table")
-    headers = ["Title", "Authors", "Journal", "Year", "Citations", "DOI", "Published Date", "Abstract"]
+def _build_summary_sheet(wb: Workbook, papers: list[PaperResult], analyses: list[PaperAnalysis | None]) -> None:
+    ws = wb.create_sheet("Paper Summary")
+    headers = [
+        "Title",
+        "Authors",
+        "Journal",
+        "Year",
+        "Citations",
+        "Battery System",
+        "Electrolyte",
+        "Main Contribution",
+        "DOI",
+        "Published Date",
+        "Abstract",
+    ]
     _write_header_row(ws, headers)
 
-    for row_idx, paper in enumerate(papers, start=2):
+    for row_idx, (paper, analysis) in enumerate(zip(papers, analyses), start=2):
         values = [
             paper.title,
             ", ".join(paper.authors) or "—",
             paper.journal or "—",
             paper.year or "—",
             paper.citation_count if paper.citation_count is not None else 0,
+            (analysis.battery_system if analysis else None) or "—",
+            (analysis.electrolyte if analysis else None) or "—",
+            (analysis.innovation if analysis else None) or "—",
             paper.doi or "—",
             paper.published_date or "—",
             paper.abstract or "—",
@@ -177,12 +198,18 @@ def _build_comparison_sheet(wb: Workbook, comparison: ComparisonResult | None, c
         values = [
             table_row.title,
             table_row.electrolyte,
+            table_row.salt,
+            table_row.additive,
             table_row.cathode,
             table_row.anode,
             table_row.separator,
             table_row.cell_type,
             table_row.voltage_window,
             table_row.temperature,
+            table_row.cycle_condition,
+            table_row.main_finding,
+            table_row.advantages,
+            table_row.limitations,
         ]
         _write_data_row(ws, data_row, [v or "—" for v in values])
         if offset % 2 == 1:

@@ -101,6 +101,6 @@ async def test_generate_export_produces_a_valid_workbook_even_without_ai(monkeyp
     workbook_bytes = await export_service.generate_export(papers)
 
     wb = load_workbook(io.BytesIO(workbook_bytes))
-    assert wb.sheetnames == ["Summary Table", "Experimental Conditions", "AI Summary", "Comparison"]
-    assert wb["Summary Table"].cell(row=2, column=1).value == "Paper 0"
+    assert wb.sheetnames == ["Paper Summary", "Experimental Conditions", "AI Summary", "Comparison"]
+    assert wb["Paper Summary"].cell(row=2, column=1).value == "Paper 0"
     assert wb["Experimental Conditions"].cell(row=2, column=2).value == "Not analyzed"

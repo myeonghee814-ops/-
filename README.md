@@ -1,18 +1,28 @@
 # BLIP — Battery Literature Intelligence Platform
 
-BLIP helps battery researchers search, organize, summarize, and compare
-recent battery electrolyte papers.
+BLIP is a literature analysis tool for battery electrolyte researchers —
+not a generic paper search engine. Every feature is built to do one of
+five things: reduce reading time, increase scientific accuracy, make
+papers easy to compare, extract experimental conditions into structured
+data, or present information more cleanly. A researcher should be able to
+learn in five minutes what used to take reading ten papers.
 
 **Status:** literature search (Semantic Scholar with automatic OpenAlex
-fallback), AI paper analysis, an AI comparison engine, and Excel export of
-selected papers (summary + experimental conditions + AI summary +
-cross-paper comparison, styled with openpyxl) are all implemented and
-wired together — select papers in the search results grid and export them
-to get a full AI-analyzed report. The project also has a production-shaped
-deployment path: multi-stage Docker images, a Postgres + Alembic migration
-path, structured/JSON logging, request tracing, Prometheus metrics, and
-authentication scaffolding (no login yet). The paper detail page's own
-"Quick Summary" cards are still static placeholders — see
+fallback) returns a compact results table (Title, Journal, Year, Citation
+Count, Battery System, Electrolyte, Main Contribution — the last three
+AI-derived, filled in on demand via "Analyze Results"). AI paper analysis
+extracts structured experimental conditions per paper; the paper detail
+page presents them as a scannable, <30-second "Experimental Conditions"
+card alongside Key Experimental Results/Advantages/Limitations/AI Summary.
+A dedicated Paper Comparison page lets you select multiple papers and get
+an AI-generated cross-paper comparison table (electrolyte, salt,
+additives, cathode, anode, voltage window, temperature, cycle condition,
+main finding, advantages, limitations). Excel export (4 formatted sheets:
+Paper Summary, Experimental Conditions, AI Summary, Comparison) works from
+both the search page and the comparison page. The project also has a
+production-shaped deployment path: multi-stage Docker images, a Postgres +
+Alembic migration path, structured/JSON logging, request tracing,
+Prometheus metrics, and authentication scaffolding (no login yet) — see
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full list of design
 decisions and what's intentionally missing so far.
 
@@ -84,7 +94,8 @@ AI comparison: `POST http://localhost:8000/api/v1/compare` with a JSON body of
 from `/analyze`
 Excel export: `POST http://localhost:8000/api/v1/export` with a JSON body of
 `{"papers": [...]}` (search results) — analyzes and, if enough succeed,
-compares them, then returns a 4-sheet `.xlsx` file
+compares them, then returns a 4-sheet `.xlsx` file (Paper Summary,
+Experimental Conditions, AI Summary, Comparison)
 
 Run tests:
 
@@ -149,7 +160,8 @@ for the full list of what a further production hardening pass would add.
 - [x] AI comparison engine (`POST /api/v1/compare`)
 - [x] Excel export of selected papers (`POST /api/v1/export`, openpyxl)
 - [x] Production Docker images, Postgres + Alembic, logging/monitoring, auth placeholders
-- [ ] Wire AI analysis/comparison into the paper detail page itself
+- [x] Battery-research-focused search table, paper detail page, and a dedicated Paper Comparison page
 - [ ] Persisting/organizing searched papers (ingestion into the `papers` table)
+- [ ] Caching AI analyses so the same paper isn't re-sent to OpenAI across Analyze/Compare/Export
 - [ ] Real user authentication (login/signup, built on the existing placeholders)
 - [ ] TLS/ingress, CI/CD, secrets manager integration

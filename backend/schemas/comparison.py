@@ -19,12 +19,18 @@ class ComparisonTableRow(BaseModel):
 
     title: str | None = None
     electrolyte: str | None = None
+    salt: str | None = None
+    additive: str | None = None
     cathode: str | None = None
     anode: str | None = None
     separator: str | None = None
     cell_type: str | None = None
     voltage_window: str | None = None
     temperature: str | None = None
+    cycle_condition: str | None = None
+    main_finding: str | None = Field(default=None, description="One-sentence summary of this paper's key finding")
+    advantages: str | None = Field(default=None, description="Concise summary of this paper's advantages")
+    limitations: str | None = Field(default=None, description="Concise summary of this paper's limitations")
 
 
 class ComparisonResult(BaseModel):

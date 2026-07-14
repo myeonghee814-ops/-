@@ -19,6 +19,7 @@ def _sample_paper_analysis(index: int) -> PaperAnalysis:
         title=f"Paper {index}",
         authors=[f"Author {index}"],
         journal="Journal of Power Sources",
+        battery_system="Li-ion",
         electrolyte="1M LiPF6 in EC/DMC",
         salt="LiPF6",
         solvent="EC/DMC",
@@ -56,7 +57,20 @@ def _sample_comparison_result(paper_count: int = 0) -> ComparisonResult:
         research_trend="Increasing focus on additive engineering for SEI stability",
         research_gap="Limited high-temperature cycling data",
         potential_future_direction="Systematic study of additive combinations at elevated temperatures",
-        comparison_table=[ComparisonTableRow(title="Paper 0", electrolyte="1M LiPF6 in EC/DMC", cathode="NMC811")],
+        comparison_table=[
+            ComparisonTableRow(
+                title="Paper 0",
+                electrolyte="1M LiPF6 in EC/DMC",
+                salt="LiPF6",
+                additive="FEC",
+                cathode="NMC811",
+                anode="Graphite",
+                cycle_condition="1C/1C, 25 C",
+                main_finding="Improved cycling stability",
+                advantages="Higher capacity retention",
+                limitations="Limited high-temperature data",
+            )
+        ],
     )
 
 
@@ -127,6 +141,8 @@ async def test_openai_client_compare_papers_parses_valid_response(monkeypatch: p
 
     assert result.most_common_anode == "Graphite"
     assert len(result.comparison_table) == 1
+    assert result.comparison_table[0].salt == "LiPF6"
+    assert result.comparison_table[0].main_finding == "Improved cycling stability"
 
 
 @pytest.mark.asyncio
@@ -161,6 +177,8 @@ async def test_compare_endpoint_returns_json(monkeypatch: pytest.MonkeyPatch) ->
     assert body["paper_count"] == 10
     assert body["most_common_cathode"] == "NMC811"
     assert isinstance(body["comparison_table"], list)
+    assert body["comparison_table"][0]["salt"] == "LiPF6"
+    assert body["comparison_table"][0]["main_finding"] == "Improved cycling stability"
 
 
 @pytest.mark.asyncio

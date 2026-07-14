@@ -1,15 +1,22 @@
 # BLIP Architecture
 
-This document explains the design decisions behind the project. Literature
-search (`GET /api/search`), AI paper analysis (`POST /api/v1/analyze`), the
-AI comparison engine (`POST /api/v1/compare`), and Excel export
-(`POST /api/v1/export`) are implemented, and the project has a
-production-shaped deployment path: multi-stage Docker images, a Postgres +
-Alembic migration path, structured logging, request tracing, Prometheus
-metrics, and authentication scaffolding (see the relevant sections below).
-Persisting/organizing papers and real user authentication are not
-implemented — this describes the scaffolding those remaining features
-will be built on.
+This document explains the design decisions behind the project. BLIP is a
+literature analysis tool for battery electrolyte researchers, not a
+generic paper search engine — every feature exists to reduce reading time,
+increase scientific accuracy, make papers easy to compare, extract
+experimental conditions into structured data, or present information more
+cleanly. Anything that doesn't serve one of those five goals doesn't get
+built, even if it would be an easy addition.
+
+Literature search (`GET /api/search`), AI paper analysis
+(`POST /api/v1/analyze`), the AI comparison engine (`POST /api/v1/compare`),
+Excel export (`POST /api/v1/export`), and a dedicated paper comparison page
+are implemented, and the project has a production-shaped deployment path:
+multi-stage Docker images, a Postgres + Alembic migration path, structured
+logging, request tracing, Prometheus metrics, and authentication
+scaffolding (see the relevant sections below). Persisting/organizing
+papers and real user authentication are not implemented — this describes
+the scaffolding those remaining features will be built on.
 
 ## Layering (backend)
 
@@ -185,14 +192,26 @@ types/        Shared TypeScript types, mirroring backend Pydantic schemas
 ```
 
 - **TanStack Query** owns all server state (caching, loading/error state,
-  refetching) so components don't hand-roll `useEffect` + `useState` data
-  fetching. `useHealthCheck` is the template every future data hook follows.
+  refetching) via `useMutation` for every user-triggered AI action
+  (`useAnalyzePaper`, `useAnalyzePapers`, `useComparePapers`,
+  `useExportPapers`) so components don't hand-roll `useEffect` + `useState`
+  data fetching or loading/error flags.
 - **services/** isolates the HTTP layer: if the API contract changes,
   only the relevant `*Service.ts` file changes, not every component that
-  uses it.
-- **AG Grid** powers the search results table, including multi-row
-  selection (`rowSelection={{ mode: 'multiRow', checkboxes: true }}`) used
-  to pick papers for Excel export.
+  uses it. `services/apiError.ts::getErrorMessage` centralizes pulling a
+  readable message out of a FastAPI `{"detail": "..."}` error response, so
+  every mutation's error state can render something better than "Request
+  failed" with one shared helper.
+- **AG Grid** powers both the search results table and the paper
+  comparison table, including multi-row selection
+  (`rowSelection={{ mode: 'multiRow', checkboxes: true }}`) on the search
+  page used to pick papers for "Compare Selected" and "Export Selected."
+- **types/analysis.ts and types/comparison.ts** mirror
+  `schemas/analysis.py`/`schemas/comparison.py` field-for-field, the same
+  convention `types/paper.ts` already used for `schemas/search.py`. The
+  frontend didn't consume `/analyze` or `/compare` JSON directly before
+  this pass (only the export pipeline called them, server-side, returning
+  an opaque file) — these are the first types for that.
 - The Vite dev server proxies `/api` to the backend (`vite.config.ts`), so
   in development the frontend can call relative paths and never needs
   `VITE_API_BASE_URL` set; in Docker/production that env var points
@@ -234,11 +253,21 @@ version later without touching `search_service.py`.
 
 Input: `title` plus either `abstract` or `pdf_text` (`schemas/analysis.py::AnalyzeRequest`;
 a validator rejects requests with neither). Output: `PaperAnalysis` — the full
-set of fields the frontend's paper detail "Quick Summary" cards were built to
-show (electrolyte, salt, solvent, additive, cathode, anode, separator, cell
-type, voltage window, temperature, formation protocol, cycle condition, rate
-capability, main findings, innovation, advantages, limitations, future work),
-plus title/authors/journal for cross-checking against the source paper.
+set of fields the frontend's paper detail page and search results table show
+(battery_system, electrolyte, salt, solvent, additive, cathode, anode,
+separator, cell type, voltage window, temperature, formation protocol, cycle
+condition, rate capability, main findings, innovation, advantages,
+limitations, future work), plus title/authors/journal for cross-checking
+against the source paper.
+
+**`battery_system`** (Li-ion, Li-metal, Na-ion, solid-state, ...) was added
+specifically for the search results table's "Battery System" column —
+letting a researcher scan chemistry class across many results without
+opening any of them is a direct "reduce reading time" win. The search
+table's "Main Contribution" column deliberately reuses the existing
+`innovation` field (relabeled client-side) rather than adding a duplicate
+field with the same meaning — see "Redesign: search results and paper
+detail" below.
 
 **Same API-logic/service-layer split as search.** `services/external/openai_client.py`
 owns the OpenAI Responses API request/response handling and only raises
@@ -260,10 +289,20 @@ abstracts won't mention half of these fields (e.g. formation protocol).
 The alternative — coercing missing data into empty strings or invented
 values — would silently misinform a researcher relying on this output.
 
-**Not yet wired to the frontend.** The paper detail page's "Quick Summary"
-cards (`frontend/src/pages/PaperDetailPage.tsx`) still show static
-"not analyzed yet" placeholders. Calling this endpoint from the UI (e.g. an
-"Analyze" button + a TanStack Query mutation) is a separate follow-up.
+**Now wired to the frontend, two ways.** `frontend/src/hooks/useAnalyzePaper.ts`
+backs the paper detail page's "Analyze This Paper" button (single paper, on
+demand). `frontend/src/hooks/useAnalyzePapers.ts`
+(`services/analysisService.ts::analyzePapers`) calls this endpoint
+concurrently for many papers at once via `Promise.allSettled`, tolerating
+individual failures (no abstract, a transient error) rather than letting one
+bad paper fail the batch — the client-side mirror of what
+`services/export_service.py::_analyze_all` already did server-side. This
+batch helper backs both the search page's "Analyze Results" button and the
+"Compare Selected" flow below. Analysis was deliberately kept **out** of the
+search endpoint itself — running AI analysis on every search result
+automatically (up to 100 papers per the existing limit selector) would make
+search slow and expensive, undermining "reduce reading time"; it's an
+explicit, bounded, opt-in action instead.
 
 ## AI comparison engine (`POST /api/v1/compare`)
 
@@ -273,8 +312,24 @@ called once per paper. Output: `ComparisonResult` — common experimental
 conditions, differences, frequently used electrolytes/additives, most
 common cathode/anode, research trend, research gap, potential future
 direction, and a `comparison_table` (one row per input paper: title,
-electrolyte, cathode, anode, separator, cell type, voltage window,
-temperature) for scanning papers side by side.
+electrolyte, salt, additive, cathode, anode, separator, cell type, voltage
+window, temperature, cycle condition, main_finding, advantages,
+limitations) for scanning papers side by side without opening any of them.
+
+**Comparison table columns beyond the original 8.** `ComparisonTableRow`
+originally only had title/electrolyte/cathode/anode/separator/cell_type/
+voltage_window/temperature. The dedicated Paper Comparison page's spec
+asked for salt, additives, cycle condition, main finding, advantages, and
+limitations too — all extended onto the existing row shape (additive,
+nullable fields) rather than a new schema, and all sourced from data the
+model already had access to (each paper's `PaperAnalysis`) — no new
+extraction concept, just more of what was already being extracted made
+visible in the table. `separator`/`cell_type` were kept even though the
+new spec's column list didn't name them, since removing working, useful
+columns wasn't asked for; the *on-screen* comparison table
+(`frontend/src/pages/ComparisonPage.tsx`) shows exactly the requested
+column set, while the Excel Comparison sheet keeps the superset — both are
+free from the same underlying data, no duplicated logic.
 
 **"After 10 papers are analyzed, automatically compare them" — how the batch
 size is enforced without persistence.** There's no server-side tracking of
@@ -312,20 +367,27 @@ text) and lets the model focus purely on cross-paper synthesis.
 
 Input: `schemas/export.py::ExportRequest` — the papers the user selected in
 the search results grid (`{"papers": [PaperResult, ...]}`). Output: a
-`.xlsx` file (`StreamingResponse`, not JSON) with four sheets: **Summary
-Table** (bibliographic metadata, straight from the search results),
-**Experimental Conditions**, **AI Summary** (innovation/findings/advantages
-/limitations/future work), and **Comparison** (cross-paper synthesis plus a
-per-paper side-by-side table).
+`.xlsx` file (`StreamingResponse`, not JSON) with four sheets: **Paper
+Summary** (bibliographic metadata plus Battery System/Main Contribution,
+matching the search results table's columns), **Experimental Conditions**,
+**AI Summary** (innovation/findings/advantages/limitations/future work), and
+**Comparison** (cross-paper synthesis plus a per-paper side-by-side table,
+now including salt/additive/cycle condition/main finding/advantages/
+limitations alongside the original columns).
 
-**Export is the first thing that actually calls `/analyze` and `/compare`
-from a user action.** `services/export_service.py` analyzes every selected
-paper concurrently (`asyncio.gather`, using each paper's title+abstract
-already in hand from search — no re-fetching), then runs the comparison
-engine over whatever analyses succeeded, provided there are at least
-`COMPARISON_MIN_PAPERS`. This is different from the frontend's paper detail
-page, which still only shows static placeholders — export doesn't reuse
-that UI, it drives the AI pipeline directly from the backend.
+**Export analyzes independently of the comparison page, and re-analyzes on
+every call.** `services/export_service.py` analyzes every selected paper
+concurrently (`asyncio.gather`, using each paper's title+abstract already
+in hand from search — no re-fetching), then runs the comparison engine over
+whatever analyses succeeded, provided there are at least
+`COMPARISON_MIN_PAPERS`. If a user compares papers on the Paper Comparison
+page and then clicks "Export to Excel" there, the papers get analyzed a
+second time (once for the on-screen comparison, once inside export) rather
+than the first result being reused — accepted as a reasonable simplicity/
+cost tradeoff for now (no new endpoint, no `ExportRequest` schema change to
+accept pre-computed analyses) rather than over-engineering a cache for a
+usage pattern that may not be common; worth revisiting if AI cost/latency
+on that path becomes a real problem.
 
 **An export should basically never hard-fail.** The Summary Table sheet
 only needs data already in hand (no AI), so it always succeeds. If AI
@@ -355,6 +417,69 @@ sheet is laid out as a short report (labeled facts, bulleted lists) followed
 by its own per-paper table — `freeze_panes` is set below *that* table's
 header rather than at row 1, since that's the part of the sheet actually
 long enough to need it.
+
+## Paper Comparison page (`frontend/src/pages/ComparisonPage.tsx`)
+
+New page, reachable from the search page's "Compare Selected" button —
+not a persistent nav link, since there's nothing to show without a prior
+selection (same reasoning as `/paper/:id`: no persistence yet, so state
+travels via `navigate(path, { state })`, and opening the route directly
+shows a graceful "select papers on the search page" message instead of an
+error).
+
+**No new backend endpoints.** `frontend/src/hooks/useComparePapers.ts`
+orchestrates the existing `/analyze` (batched, client-side) and `/compare`
+endpoints entirely from the browser: analyze every selected paper, keep
+only the ones that succeeded, call `/compare` with those. The resulting
+`{ papers, analyses, comparison }` travels to the comparison page via
+router state, so the page renders immediately with no further fetch. Its
+"Export to Excel" button reuses `useExportPapers` with the same `papers`
+list — see the Excel export section above for the cost tradeoff that
+implies.
+
+## Redesign: search results and paper detail
+
+BLIP's UI pivoted from generic literature search to a battery-research
+tool this pass. Two things worth calling out because they involved real
+interpretation of an ambiguous or overlapping spec, not just following
+explicit instructions:
+
+**Search results table dropped DOI/Abstract Preview for Battery System/
+Electrolyte/Main Contribution.** The three AI-derived columns are populated
+by an opt-in "Analyze Results" button (`useAnalyzePapers`, batching
+`/analyze` calls for whatever's currently loaded), not automatically on
+search — see the AI paper analysis section above for why. Cells show "—"
+until analyzed, same convention used everywhere else in the app for
+missing AI data. "Main Contribution" reuses `PaperAnalysis.innovation`
+(relabeled client-side) rather than a new field with the same meaning.
+Row-level analysis results are keyed by a row id derived from DOI (stable)
+or array index (only unique *within one result set*) — `analysisByRowId`
+is explicitly cleared on every new search submission, otherwise a new
+paper landing on the same index as a previous search's paper could
+silently inherit that old paper's analysis.
+
+**Paper detail page: one "Experimental Conditions" card, not four.** The
+section list named `Experimental Conditions`, `Electrolyte Composition`,
+`Cell Configuration`, and `Electrochemical Evaluation` as apparently
+separate sections, but `PaperAnalysis` has no narrative text per sub-topic
+— only the same flat fields a dedicated "Experimental Condition Card" spec
+(elsewhere in the same request) described as one compact, <30-second-scan
+card. Four cards would have meant four cards repeating subsets of the same
+13 fields, working against "reduce reading time" and "clean interface."
+Resolved as one `Experimental Conditions` card with three internal
+subheadings (`ExperimentalGroup` components for Electrolyte Composition /
+Cell Configuration / Electrochemical Evaluation) — every section name from
+the spec is present, but as organization within one card rather than four
+separate ones. The `Keywords` card (previously a permanent placeholder,
+since no keyword-extraction feature exists) was dropped since the new
+section list doesn't include it.
+
+The detail page also moved from a two-column (paper info / "Quick
+Summary" sidebar) layout to a single-column stack of cards — the new spec
+describes a flat list of sections rather than a two-column split, and a
+single column reads more like the "clean, intuitive... suitable for
+researchers working every day" tool described than a dashboard-style
+split does.
 
 ## Authentication placeholders (`core/security.py`, `models/user.py`) — no login yet
 
@@ -448,13 +573,17 @@ build`/`docker compose up` of these images wasn't possible here.)*
 
 - No persistence of search results or analyses (all live-only; nothing is
   written to the `papers` table yet — that's a separate "ingestion" concern)
-- No dedicated frontend UI for AI analysis/comparison outside of export
-  (the paper detail page's Quick Summary cards are still static placeholders)
 - No automatic server-side trigger that counts analyses over time and fires
-  the comparison on its own — the caller (or, for export, the selected
-  batch) supplies the papers each time
-- No caching of AI analyses — exporting overlapping paper sets re-analyzes
-  shared papers rather than reusing prior results
+  the comparison on its own — the caller (search page's "Compare Selected,"
+  or export's selected batch) supplies the papers each time
+- No caching of AI analyses — analyzing overlapping paper sets (e.g. via
+  search's "Analyze Results," then later "Compare Selected," then "Export
+  to Excel" on the same papers) re-analyzes shared papers rather than
+  reusing prior results, so the same paper can be sent to OpenAI multiple
+  times across a single session
+- No keyword extraction (the previous "Keywords" placeholder card was
+  removed from the paper detail page rather than kept as a permanent stub,
+  since the new section spec doesn't call for it)
 - No real authentication — see "Authentication placeholders" above; no
   route requires a caller to be logged in
 - No TLS termination/public ingress in `docker-compose.prod.yml` — put a

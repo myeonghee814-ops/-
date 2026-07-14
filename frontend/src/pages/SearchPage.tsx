@@ -8,11 +8,23 @@ import { useNavigate } from 'react-router-dom'
 import type { ColDef, RowClickedEvent, SelectionChangedEvent, ValueFormatterParams } from 'ag-grid-community'
 
 import LoadingSpinner from '@/components/LoadingSpinner'
+import { useAnalyzePapers } from '@/hooks/useAnalyzePapers'
+import { useComparePapers } from '@/hooks/useComparePapers'
 import { useExportPapers } from '@/hooks/useExportPapers'
 import { useSearchPapers } from '@/hooks/useSearchPapers'
+import { getErrorMessage } from '@/services/apiError'
+import type { PaperAnalysis } from '@/types/analysis'
 import type { PaperResult, SearchParams } from '@/types/paper'
 
-type GridRow = PaperResult & { _id: string }
+// Analysis-derived fields, filled in only after "Analyze Results" runs.
+// Kept separate from PaperResult (raw search metadata) since they come from
+// a different, opt-in step -- see the "Analyze Results" button below.
+type GridRow = PaperResult & {
+  _id: string
+  battery_system: string | null
+  electrolyte: string | null
+  main_contribution: string | null
+}
 
 const PAPER_LIMIT_OPTIONS = [10, 20, 50, 100]
 const EARLIEST_YEAR = 1990
@@ -28,6 +40,15 @@ function formatSourceName(source: string): string {
   return source === 'semantic_scholar' ? 'Semantic Scholar' : 'OpenAlex'
 }
 
+// Doi-based ids are stable; index-based ids are only unique *within one
+// result set*, so any state keyed by this id (analysisByRowId below) must
+// be reset whenever a new search replaces the result set -- otherwise a
+// new paper landing on the same index as an old one would inherit its
+// stale analysis.
+function getRowId(paper: PaperResult, index: number): string {
+  return paper.doi ? `doi-${encodeURIComponent(paper.doi)}` : `idx-${index}`
+}
+
 export default function SearchPage() {
   const navigate = useNavigate()
 
@@ -38,9 +59,12 @@ export default function SearchPage() {
   const [formError, setFormError] = useState<string | null>(null)
   const [submittedQuery, setSubmittedQuery] = useState<SearchParams | null>(null)
   const [selectedRows, setSelectedRows] = useState<GridRow[]>([])
+  const [analysisByRowId, setAnalysisByRowId] = useState<Record<string, PaperAnalysis | null>>({})
 
   const { data, isFetching, isError, error } = useSearchPapers(submittedQuery)
   const exportMutation = useExportPapers()
+  const analyzeMutation = useAnalyzePapers()
+  const compareMutation = useComparePapers()
 
   const handleSearch = useCallback(
     (event: FormEvent) => {
@@ -57,6 +81,7 @@ export default function SearchPage() {
       }
 
       setFormError(null)
+      setAnalysisByRowId({})
       setSubmittedQuery({
         keyword: trimmedKeyword,
         yearFrom: yearFrom === '' ? undefined : yearFrom,
@@ -69,11 +94,18 @@ export default function SearchPage() {
 
   const rowData = useMemo<GridRow[]>(
     () =>
-      (data?.results ?? []).map((paper, index) => ({
-        ...paper,
-        _id: paper.doi ? `doi-${encodeURIComponent(paper.doi)}` : `idx-${index}`,
-      })),
-    [data],
+      (data?.results ?? []).map((paper, index) => {
+        const _id = getRowId(paper, index)
+        const analysis = analysisByRowId[_id]
+        return {
+          ...paper,
+          _id,
+          battery_system: analysis?.battery_system ?? null,
+          electrolyte: analysis?.electrolyte ?? null,
+          main_contribution: analysis?.innovation ?? null,
+        }
+      }),
+    [data, analysisByRowId],
   )
 
   const columnDefs = useMemo<ColDef<GridRow>[]>(
@@ -82,7 +114,7 @@ export default function SearchPage() {
         headerName: 'Title',
         field: 'title',
         flex: 2,
-        minWidth: 240,
+        minWidth: 220,
         wrapText: true,
         autoHeight: true,
         cellClass: 'font-medium text-slate-900 leading-snug py-2',
@@ -91,30 +123,38 @@ export default function SearchPage() {
         headerName: 'Journal',
         field: 'journal',
         flex: 1,
-        minWidth: 140,
+        minWidth: 130,
         valueFormatter: (params: ValueFormatterParams<GridRow>) => params.value ?? '—',
       },
-      { headerName: 'Year', field: 'year', width: 100 },
+      { headerName: 'Year', field: 'year', width: 90 },
       {
-        headerName: 'Citations',
+        headerName: 'Citation Count',
         field: 'citation_count',
-        width: 120,
+        width: 130,
         valueFormatter: (params: ValueFormatterParams<GridRow>) => (params.value ?? 0).toLocaleString(),
       },
       {
-        headerName: 'DOI',
-        field: 'doi',
+        headerName: 'Battery System',
+        field: 'battery_system',
         flex: 1,
-        minWidth: 160,
-        cellClass: 'font-mono text-xs text-slate-500',
+        minWidth: 130,
         valueFormatter: (params: ValueFormatterParams<GridRow>) => params.value ?? '—',
       },
       {
-        headerName: 'Abstract Preview',
-        field: 'abstract',
+        headerName: 'Electrolyte',
+        field: 'electrolyte',
+        flex: 1.5,
+        minWidth: 200,
+        valueFormatter: (params: ValueFormatterParams<GridRow>) => truncate(params.value ?? null, 80),
+      },
+      {
+        headerName: 'Main Contribution',
+        field: 'main_contribution',
         flex: 2,
         minWidth: 260,
-        valueFormatter: (params: ValueFormatterParams<GridRow>) => truncate(params.value ?? null, 140),
+        wrapText: true,
+        autoHeight: true,
+        valueFormatter: (params: ValueFormatterParams<GridRow>) => truncate(params.value ?? null, 160),
       },
     ],
     [],
@@ -133,9 +173,37 @@ export default function SearchPage() {
   }, [])
 
   const handleExport = useCallback(() => {
-    const papers: PaperResult[] = selectedRows.map(({ _id, ...paper }) => paper)
+    const papers: PaperResult[] = selectedRows.map(
+      ({ _id, battery_system, electrolyte, main_contribution, ...paper }) => paper,
+    )
     exportMutation.mutate(papers)
   }, [selectedRows, exportMutation])
+
+  const handleAnalyzeResults = useCallback(() => {
+    const papers = data?.results ?? []
+    analyzeMutation.mutate(papers, {
+      onSuccess: (results) => {
+        setAnalysisByRowId((previous) => {
+          const next = { ...previous }
+          papers.forEach((paper, index) => {
+            next[getRowId(paper, index)] = results[index]
+          })
+          return next
+        })
+      },
+    })
+  }, [data, analyzeMutation])
+
+  const handleCompare = useCallback(() => {
+    const papers: PaperResult[] = selectedRows.map(
+      ({ _id, battery_system, electrolyte, main_contribution, ...paper }) => paper,
+    )
+    compareMutation.mutate(papers, {
+      onSuccess: (result) => {
+        navigate('/compare', { state: result })
+      },
+    })
+  }, [selectedRows, compareMutation, navigate])
 
   return (
     <section className="space-y-6">
@@ -250,8 +318,24 @@ export default function SearchPage() {
                 <span className="text-slate-400">· {selectedRows.length} selected</span>
               )}
             </div>
-            <div className="flex items-center gap-3">
-              {isFetching && <LoadingSpinner />}
+            <div className="flex flex-wrap items-center gap-3">
+              {(isFetching || analyzeMutation.isPending || compareMutation.isPending) && <LoadingSpinner />}
+              <button
+                type="button"
+                onClick={handleAnalyzeResults}
+                disabled={!data || data.results.length === 0 || analyzeMutation.isPending}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {analyzeMutation.isPending ? 'Analyzing…' : 'Analyze Results'}
+              </button>
+              <button
+                type="button"
+                onClick={handleCompare}
+                disabled={selectedRows.length === 0 || compareMutation.isPending}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {compareMutation.isPending ? 'Comparing…' : `Compare Selected (${selectedRows.length})`}
+              </button>
               <button
                 type="button"
                 onClick={handleExport}
@@ -266,6 +350,16 @@ export default function SearchPage() {
           {exportMutation.isError && (
             <div className="border-b border-slate-100 px-4 py-2 text-xs text-red-600">
               Export failed. Please try again.
+            </div>
+          )}
+          {analyzeMutation.isError && (
+            <div className="border-b border-slate-100 px-4 py-2 text-xs text-red-600">
+              {getErrorMessage(analyzeMutation.error, 'Analysis failed. Please try again.')}
+            </div>
+          )}
+          {compareMutation.isError && (
+            <div className="border-b border-slate-100 px-4 py-2 text-xs text-red-600">
+              {getErrorMessage(compareMutation.error, 'Comparison failed. Please try again.')}
             </div>
           )}
 

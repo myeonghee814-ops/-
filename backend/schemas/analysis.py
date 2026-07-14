@@ -29,6 +29,9 @@ class PaperAnalysis(BaseModel):
     title: str | None = None
     authors: list[str] = Field(default_factory=list)
     journal: str | None = None
+    battery_system: str | None = Field(
+        default=None, description="Battery chemistry class, e.g. Li-ion, Li-metal, Na-ion, solid-state"
+    )
     electrolyte: str | None = None
     salt: str | None = None
     solvent: str | None = None
