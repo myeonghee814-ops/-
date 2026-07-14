@@ -1,8 +1,7 @@
 """AI stages of the pipeline: bilingual query expansion, relevance
 re-ranking, and battery-metadata extraction, all via Google's Gemini API
-in JSON mode (called through the OpenAI Python SDK pointed at Gemini's
-OpenAI-compatible endpoint, so no separate SDK is needed). Gemini's free
-tier requires no billing/credit card, unlike the OpenAI API.
+native REST endpoint (generateContent) in JSON mode. Gemini's free tier
+requires no billing/credit card, unlike the OpenAI API.
 
 The AI is prompted to behave like a senior battery researcher, not a
 generic summarizer: ranking weighs chemistry/electrolyte/cell-type/
@@ -16,8 +15,7 @@ before anything else runs.
 
 import json
 
-from openai import AsyncOpenAI
-from openai import OpenAIError
+import httpx
 
 from app.core.config import settings
 from app.services.semantic_scholar_service import Candidate
@@ -103,16 +101,36 @@ Respond ONLY with JSON of this exact shape:
 """
 
 
-GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
+GEMINI_URL_TEMPLATE = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 
 
-def _client() -> AsyncOpenAI:
+async def _generate_json(system_prompt: str, user_payload: dict) -> dict:
+    """Call Gemini's native generateContent endpoint in JSON mode and parse
+    the response. Uses the ?key= query-param auth Gemini's REST API expects
+    (not an OpenAI-style Authorization header)."""
+
     if not settings.gemini_api_key:
         raise RuntimeError(
             "GEMINI_API_KEY가 설정되지 않았습니다. backend/.env 파일에 추가한 뒤 "
             "다시 시도해주세요. (무료 발급: https://aistudio.google.com/apikey)"
         )
-    return AsyncOpenAI(api_key=settings.gemini_api_key, base_url=GEMINI_BASE_URL)
+
+    url = GEMINI_URL_TEMPLATE.format(model=settings.gemini_model)
+    body = {
+        "system_instruction": {"parts": [{"text": system_prompt}]},
+        "contents": [{"parts": [{"text": json.dumps(user_payload)}]}],
+        "generationConfig": {"responseMimeType": "application/json"},
+    }
+
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            url, params={"key": settings.gemini_api_key}, json=body, timeout=60
+        )
+        resp.raise_for_status()
+        data = resp.json()
+
+    text = data["candidates"][0]["content"]["parts"][0]["text"]
+    return json.loads(text)
 
 
 def _truncate(text: str, limit: int = 1000) -> str:
@@ -124,18 +142,9 @@ async def expand_search_query(keyword: str) -> tuple[str, list[str]]:
     effective English Semantic Scholar search query. Returns (english_query, expanded_terms).
     """
 
-    client = _client()
     try:
-        response = await client.chat.completions.create(
-            model=settings.gemini_model,
-            response_format={"type": "json_object"},
-            messages=[
-                {"role": "system", "content": QUERY_EXPANSION_SYSTEM_PROMPT},
-                {"role": "user", "content": json.dumps({"keyword": keyword})},
-            ],
-        )
-        data = json.loads(response.choices[0].message.content)
-    except (OpenAIError, json.JSONDecodeError, KeyError, IndexError) as exc:
+        data = await _generate_json(QUERY_EXPANSION_SYSTEM_PROMPT, {"keyword": keyword})
+    except (httpx.HTTPError, json.JSONDecodeError, KeyError, IndexError) as exc:
         raise RuntimeError(f"AI 검색어 확장에 실패했습니다: {exc}") from exc
 
     english_query = str(data.get("english_query", "")).strip() or keyword
@@ -152,32 +161,23 @@ async def rerank_candidates(
     if not candidates:
         return []
 
-    payload = [
-        {
-            "index": i,
-            "title": c.title,
-            "journal": c.journal,
-            "year": c.year,
-            "abstract": _truncate(c.abstract),
-        }
-        for i, c in enumerate(candidates)
-    ]
+    payload = {
+        "keyword": keyword,
+        "candidates": [
+            {
+                "index": i,
+                "title": c.title,
+                "journal": c.journal,
+                "year": c.year,
+                "abstract": _truncate(c.abstract),
+            }
+            for i, c in enumerate(candidates)
+        ],
+    }
 
-    client = _client()
     try:
-        response = await client.chat.completions.create(
-            model=settings.gemini_model,
-            response_format={"type": "json_object"},
-            messages=[
-                {"role": "system", "content": RANKING_SYSTEM_PROMPT},
-                {
-                    "role": "user",
-                    "content": json.dumps({"keyword": keyword, "candidates": payload}),
-                },
-            ],
-        )
-        data = json.loads(response.choices[0].message.content)
-    except (OpenAIError, json.JSONDecodeError, KeyError, IndexError) as exc:
+        data = await _generate_json(RANKING_SYSTEM_PROMPT, payload)
+    except (httpx.HTTPError, json.JSONDecodeError, KeyError, IndexError) as exc:
         raise RuntimeError(f"AI 재순위화에 실패했습니다: {exc}") from exc
 
     rankings = data.get("rankings", [])
@@ -197,19 +197,7 @@ async def rerank_candidates(
 async def extract_battery_analysis(title: str, abstract: str) -> dict:
     """Extract battery snapshot + Korean research analysis fields for one paper."""
 
-    client = _client()
     try:
-        response = await client.chat.completions.create(
-            model=settings.gemini_model,
-            response_format={"type": "json_object"},
-            messages=[
-                {"role": "system", "content": EXTRACTION_SYSTEM_PROMPT},
-                {
-                    "role": "user",
-                    "content": json.dumps({"title": title, "abstract": abstract}),
-                },
-            ],
-        )
-        return json.loads(response.choices[0].message.content)
-    except (OpenAIError, json.JSONDecodeError, KeyError, IndexError) as exc:
+        return await _generate_json(EXTRACTION_SYSTEM_PROMPT, {"title": title, "abstract": abstract})
+    except (httpx.HTTPError, json.JSONDecodeError, KeyError, IndexError) as exc:
         raise RuntimeError(f"AI 배터리 정보 추출에 실패했습니다: {exc}") from exc
