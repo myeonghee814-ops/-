@@ -1,2 +1,43 @@
+# Python
 __pycache__/
 *.pyc
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# Backend runtime artifacts
+backend/*.db
+backend/.env
+
+# Root-level compose env file (docker-compose.prod.yml secrets)
+/.env
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+frontend/*.tsbuildinfo
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+
+# Desktop launcher runtime logs (see desktop/start.ps1)
+/logs/
+
+# PyInstaller build output (see backend/pyinstaller.spec)
+backend/build/
+backend/dist/
+
+# Tauri desktop app build artifacts (see desktop-app/README.md) --
+# frontend_dist/, binaries/*, and icons/* are generated locally by the
+# build steps there, not checked in.
+desktop-app/frontend_dist/
+desktop-app/src-tauri/target/
+desktop-app/src-tauri/gen/
+desktop-app/src-tauri/binaries/*
+!desktop-app/src-tauri/binaries/README.md
+desktop-app/src-tauri/icons/*
+!desktop-app/src-tauri/icons/README.md

@@ -1,0 +1,34 @@
+services:
+  backend:
+    build:
+      context: ./backend
+      target: development
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+    env_file:
+      - ./backend/.env
+    environment:
+      CORS_ORIGINS: http://localhost:5173
+
+  frontend:
+    build:
+      context: ./frontend
+      target: development
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    env_file:
+      - ./frontend/.env
+    environment:
+      VITE_API_BASE_URL: http://localhost:8000/api/v1
+    depends_on:
+      - backend
+
+# This is local development only (hot reload, SQLite, no Postgres, no
+# migrations run automatically). For a production-shaped stack (Postgres,
+# gunicorn, nginx, migrations-on-start), see docker-compose.prod.yml and
+# docs/ARCHITECTURE.md.

@@ -1,0 +1,78 @@
+# Production-shaped stack: Postgres, the backend's `production` Dockerfile
+# target (non-root, gunicorn+uvicorn workers, migrations run on start via
+# entrypoint.sh), and the frontend's `production` target (static build
+# served by nginx, which also reverse-proxies /api/ to the backend -- see
+# frontend/nginx.conf). Only the frontend is exposed to the host; the
+# backend and database are only reachable over the internal Compose network.
+#
+# Variables referenced below (${VAR}) are resolved by Docker Compose itself
+# from a `.env` file in this same directory (NOT backend/.env or
+# frontend/.env, which are for the dev compose file instead) -- copy
+# .env.prod.example to .env and fill in real values before running this.
+#
+# Usage:
+#   docker compose -f docker-compose.prod.yml up --build -d
+#
+# This intentionally does not set up TLS/a public ingress -- put this
+# behind a load balancer or reverse proxy that terminates TLS (see
+# docs/ARCHITECTURE.md for what's still out of scope).
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-blip}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set (see .env.prod.example)}
+      POSTGRES_DB: ${POSTGRES_DB:-blip}
+    volumes:
+      - blip_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-blip}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      target: production
+    restart: unless-stopped
+    environment:
+      APP_ENV: production
+      DEBUG: "false"
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-blip}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-blip}
+      LOG_FORMAT: json
+      CORS_ORIGINS: ${CORS_ORIGINS:?CORS_ORIGINS must be set, e.g. https://your-domain.com}
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY must be set to a long random value (see .env.prod.example)}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      SEMANTIC_SCHOLAR_API_KEY: ${SEMANTIC_SCHOLAR_API_KEY:-}
+      OPENALEX_MAILTO: ${OPENALEX_MAILTO:-}
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8000/api/v1/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  frontend:
+    build:
+      context: ./frontend
+      target: production
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  blip_postgres_data:
