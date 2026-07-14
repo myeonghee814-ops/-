@@ -3,10 +3,12 @@
 BLIP helps battery researchers search, organize, summarize, and compare
 recent battery electrolyte papers.
 
-**Status:** literature search is implemented (`GET /api/search`, backed by
-Semantic Scholar with automatic OpenAlex fallback). Summarization/comparison
-are not yet — see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the
-full list of design decisions and what's intentionally missing so far.
+**Status:** literature search (`GET /api/search`, Semantic Scholar with
+automatic OpenAlex fallback) and AI paper analysis (`POST /api/v1/analyze`,
+OpenAI Responses API) are implemented. The analysis endpoint isn't wired
+into the frontend yet, and cross-paper comparison isn't built — see
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full list of design
+decisions and what's intentionally missing so far.
 
 ## Tech stack
 
@@ -23,12 +25,12 @@ full list of design decisions and what's intentionally missing so far.
 ├── backend/
 │   ├── api/            # Routes (HTTP layer only)
 │   ├── services/       # Business logic
-│   │   └── external/   # Provider API clients (Semantic Scholar, OpenAlex)
+│   │   └── external/   # Provider API clients (Semantic Scholar, OpenAlex, OpenAI)
 │   ├── models/         # SQLAlchemy ORM models
 │   ├── schemas/        # Pydantic request/response models
 │   ├── database/       # Engine/session setup
 │   ├── core/           # Settings, logging, caching
-│   ├── prompts/        # LLM prompt templates (future features)
+│   ├── prompts/        # LLM prompt templates
 │   ├── utils/          # Shared helpers
 │   ├── tests/
 │   └── main.py
@@ -62,6 +64,8 @@ uvicorn main:app --reload
 API docs: http://localhost:8000/docs
 Health check: http://localhost:8000/api/v1/health
 Literature search: http://localhost:8000/api/search?keyword=electrolyte&year_from=2020&year_to=2024&limit=10
+AI paper analysis: `POST http://localhost:8000/api/v1/analyze` with a JSON body
+of `{"title": "...", "abstract": "..."}` (requires `OPENAI_API_KEY` in `.env`)
 
 Run tests:
 
@@ -94,8 +98,9 @@ a production deployment setup — see `docs/ARCHITECTURE.md`.
 ## Roadmap
 
 - [x] Literature search (`GET /api/search`, Semantic Scholar + OpenAlex fallback)
+- [x] AI paper analysis (`POST /api/v1/analyze`, OpenAI Responses API)
+- [ ] Wire AI analysis into the paper detail page's "Quick Summary" cards
 - [ ] Persisting/organizing searched papers (ingestion into the `papers` table)
-- [ ] Paper summarization (LLM prompts live in `backend/prompts/`)
 - [ ] Paper comparison views (AG Grid)
 - [ ] PostgreSQL migration + Alembic
 - [ ] Production Docker build

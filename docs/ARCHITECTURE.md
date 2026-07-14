@@ -1,7 +1,8 @@
 # BLIP Architecture
 
 This document explains the design decisions behind the project. Literature
-search (`GET /api/search`) is implemented; summarization/comparison are not
+search (`GET /api/search`) and AI paper analysis (`POST /api/v1/analyze`) are
+implemented; persisting/organizing papers and cross-paper comparison are not
 yet — this describes the scaffolding those remaining features will be built on.
 
 ## Layering (backend)
@@ -9,12 +10,12 @@ yet — this describes the scaffolding those remaining features will be built on
 ```
 api/               HTTP concerns only: routing, request/response models, status codes
 services/          Business logic, orchestration
-services/external/ Provider-specific API clients (Semantic Scholar, OpenAlex)
+services/external/ Provider-specific API clients (Semantic Scholar, OpenAlex, OpenAI)
 models/            SQLAlchemy ORM models — the persistence shape
 schemas/           Pydantic models — the API contract shape
 database/          Engine/session lifecycle, declarative base
 core/              Cross-cutting concerns: settings, logging, caching
-prompts/           LLM prompt templates (future summarization/comparison features)
+prompts/           LLM prompt templates, kept as data separate from services/
 utils/             Small stateless helpers with no business meaning of their own
 ```
 
@@ -133,6 +134,41 @@ It's intentionally not Redis: there's only one backend process right now,
 and the `get`/`set` interface is small enough to swap to a Redis-backed
 version later without touching `search_service.py`.
 
+## AI paper analysis (`POST /api/v1/analyze`)
+
+Input: `title` plus either `abstract` or `pdf_text` (`schemas/analysis.py::AnalyzeRequest`;
+a validator rejects requests with neither). Output: `PaperAnalysis` — the full
+set of fields the frontend's paper detail "Quick Summary" cards were built to
+show (electrolyte, salt, solvent, additive, cathode, anode, separator, cell
+type, voltage window, temperature, formation protocol, cycle condition, rate
+capability, main findings, innovation, advantages, limitations, future work),
+plus title/authors/journal for cross-checking against the source paper.
+
+**Same API-logic/service-layer split as search.** `services/external/openai_client.py`
+owns the OpenAI Responses API request/response handling and only raises
+`OpenAIAnalysisError`; `services/ai_analysis_service.py` just builds the
+prompt content from the request and has no knowledge of the OpenAI SDK.
+
+**Structured output, not prompt-and-hope.** The request uses the Responses
+API's strict JSON-schema mode (`text.format.type = "json_schema"`,
+`strict: true`) with a schema matching `PaperAnalysis` field-for-field, so
+the model is constrained to emit exactly that shape — this is what
+guarantees "JSON only, no markdown" rather than relying on prompt wording
+alone. The prompt (`prompts/paper_analysis.py`) still states the
+JSON-only/no-markdown/no-guessing rules explicitly, as defense in depth and
+to steer field content (e.g. "use null rather than inventing a value").
+
+**Nullable, not fabricated.** Every descriptive field is nullable end to
+end (schema → prompt instructions → `PaperAnalysis`), because most
+abstracts won't mention half of these fields (e.g. formation protocol).
+The alternative — coercing missing data into empty strings or invented
+values — would silently misinform a researcher relying on this output.
+
+**Not yet wired to the frontend.** The paper detail page's "Quick Summary"
+cards (`frontend/src/pages/PaperDetailPage.tsx`) still show static
+"not analyzed yet" placeholders. Calling this endpoint from the UI (e.g. an
+"Analyze" button + a TanStack Query mutation) is a separate follow-up.
+
 ## Docker
 
 Each service has its own `Dockerfile`; the root `docker-compose.yml` runs
@@ -145,9 +181,10 @@ out in `docker-compose.yml` until the project needs it.
 
 ## What's deliberately not here yet
 
-- No persistence of search results (search is live-only; nothing is written
-  to the `papers` table yet — that's a separate "ingestion" concern)
-- No summarization/comparison logic (hence the currently-empty `prompts/`)
+- No persistence of search results or analyses (both are live-only; nothing
+  is written to the `papers` table yet — that's a separate "ingestion" concern)
+- No frontend wiring for AI analysis yet (see above)
+- No cross-paper comparison
 - No auth/user accounts
 - No Alembic migrations (SQLite schema is created ad hoc during this
   scaffolding phase; Alembic should be introduced alongside the first real

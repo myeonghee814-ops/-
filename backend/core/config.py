@@ -37,6 +37,10 @@ class Settings(BaseSettings):
     EXTERNAL_API_TIMEOUT_SECONDS: float = 10.0
     SEARCH_CACHE_TTL_SECONDS: int = 3600
 
+    # Required for the AI analysis pipeline (services/ai_analysis_service.py).
+    OPENAI_API_KEY: str | None = None
+    OPENAI_MODEL: str = "gpt-4o-mini"
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
