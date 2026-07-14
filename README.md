@@ -3,9 +3,10 @@
 BLIP helps battery researchers search, organize, summarize, and compare
 recent battery electrolyte papers.
 
-**Status:** architecture skeleton only. Paper search/summarization is not
-implemented yet — see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for
-the full list of design decisions and what's intentionally missing so far.
+**Status:** literature search is implemented (`GET /api/search`, backed by
+Semantic Scholar with automatic OpenAlex fallback). Summarization/comparison
+are not yet — see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the
+full list of design decisions and what's intentionally missing so far.
 
 ## Tech stack
 
@@ -22,10 +23,11 @@ the full list of design decisions and what's intentionally missing so far.
 ├── backend/
 │   ├── api/            # Routes (HTTP layer only)
 │   ├── services/       # Business logic
+│   │   └── external/   # Provider API clients (Semantic Scholar, OpenAlex)
 │   ├── models/         # SQLAlchemy ORM models
 │   ├── schemas/        # Pydantic request/response models
 │   ├── database/       # Engine/session setup
-│   ├── core/           # Settings, logging
+│   ├── core/           # Settings, logging, caching
 │   ├── prompts/        # LLM prompt templates (future features)
 │   ├── utils/          # Shared helpers
 │   ├── tests/
@@ -59,6 +61,7 @@ uvicorn main:app --reload
 
 API docs: http://localhost:8000/docs
 Health check: http://localhost:8000/api/v1/health
+Literature search: http://localhost:8000/api/search?keyword=electrolyte&year_from=2020&year_to=2024&limit=10
 
 Run tests:
 
@@ -90,7 +93,8 @@ a production deployment setup — see `docs/ARCHITECTURE.md`.
 
 ## Roadmap
 
-- [ ] Literature search/ingestion
+- [x] Literature search (`GET /api/search`, Semantic Scholar + OpenAlex fallback)
+- [ ] Persisting/organizing searched papers (ingestion into the `papers` table)
 - [ ] Paper summarization (LLM prompts live in `backend/prompts/`)
 - [ ] Paper comparison views (AG Grid)
 - [ ] PostgreSQL migration + Alembic

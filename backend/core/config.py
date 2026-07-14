@@ -27,6 +27,16 @@ class Settings(BaseSettings):
 
     LOG_LEVEL: str = "INFO"
 
+    # Optional: raises Semantic Scholar's shared-pool rate limit. Unauthenticated
+    # requests work fine for development.
+    SEMANTIC_SCHOLAR_API_KEY: str | None = None
+
+    # Optional: identifies requests for OpenAlex's "polite pool" (higher rate limits).
+    OPENALEX_MAILTO: str | None = None
+
+    EXTERNAL_API_TIMEOUT_SECONDS: float = 10.0
+    SEARCH_CACHE_TTL_SECONDS: int = 3600
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

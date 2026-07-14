@@ -1,20 +1,21 @@
 # BLIP Architecture
 
-This document explains the design decisions behind the project skeleton.
-No paper search/summarization logic is implemented yet — this describes the
-scaffolding those features will be built on top of.
+This document explains the design decisions behind the project. Literature
+search (`GET /api/search`) is implemented; summarization/comparison are not
+yet — this describes the scaffolding those remaining features will be built on.
 
 ## Layering (backend)
 
 ```
-api/        HTTP concerns only: routing, request/response models, status codes
-services/   Business logic, orchestration, external API calls (future)
-models/     SQLAlchemy ORM models — the persistence shape
-schemas/    Pydantic models — the API contract shape
-database/   Engine/session lifecycle, declarative base
-core/       Cross-cutting concerns: settings, logging
-prompts/    LLM prompt templates (future summarization/comparison features)
-utils/      Small stateless helpers with no business meaning of their own
+api/               HTTP concerns only: routing, request/response models, status codes
+services/          Business logic, orchestration
+services/external/ Provider-specific API clients (Semantic Scholar, OpenAlex)
+models/            SQLAlchemy ORM models — the persistence shape
+schemas/           Pydantic models — the API contract shape
+database/          Engine/session lifecycle, declarative base
+core/              Cross-cutting concerns: settings, logging, caching
+prompts/           LLM prompt templates (future summarization/comparison features)
+utils/             Small stateless helpers with no business meaning of their own
 ```
 
 Routes never touch SQLAlchemy directly — they call a service, which
@@ -100,6 +101,38 @@ types/        Shared TypeScript types, mirroring backend Pydantic schemas
   `VITE_API_BASE_URL` set; in Docker/production that env var points
   directly at the deployed backend origin.
 
+## Literature search (`GET /api/search`)
+
+Input: `keyword`, `year_from`/`year_to`, `limit` — validated by
+`schemas/search.py::SearchQuery` (cross-field check: `year_from <= year_to`).
+Output: normalized `PaperResult` objects (title, authors, journal, year,
+citation count, DOI, abstract, PDF URL if available, published date).
+
+**API logic vs. service layer.** `services/external/semantic_scholar_client.py`
+and `services/external/openalex_client.py` each own one provider's request
+building and response parsing, and only ever raise their own exception
+(`SemanticScholarError` / `OpenAlexError`). `services/search_service.py`
+knows nothing about either provider's HTTP shape — it just calls Semantic
+Scholar, catches its exception on failure, calls OpenAlex instead, and
+raises `ExternalSearchError` only if both fail. This means adding a third
+provider means writing one new client module and one new `except` clause,
+never touching parsing code for the other two.
+
+**Exception handling.** Every external call is wrapped so network errors,
+non-2xx responses, and unexpected JSON shapes all normalize to a typed
+exception instead of leaking `httpx`/`KeyError` internals to the route.
+The route (`api/routes/search.py`) turns `ExternalSearchError` into a 502
+and a pydantic `ValidationError` (e.g. bad year range) into a 422 — callers
+never see a raw 500.
+
+**Caching.** `core/cache.py::TTLCache` is a small in-process, dependency-free
+cache keyed by `(keyword, year_from, year_to, limit)`, with a
+`SEARCH_CACHE_TTL_SECONDS` env var controlling its lifetime. It exists to
+avoid hammering rate-limited public APIs with repeated identical queries.
+It's intentionally not Redis: there's only one backend process right now,
+and the `get`/`set` interface is small enough to swap to a Redis-backed
+version later without touching `search_service.py`.
+
 ## Docker
 
 Each service has its own `Dockerfile`; the root `docker-compose.yml` runs
@@ -112,7 +145,8 @@ out in `docker-compose.yml` until the project needs it.
 
 ## What's deliberately not here yet
 
-- No literature search, ingestion, or external API integration
+- No persistence of search results (search is live-only; nothing is written
+  to the `papers` table yet — that's a separate "ingestion" concern)
 - No summarization/comparison logic (hence the currently-empty `prompts/`)
 - No auth/user accounts
 - No Alembic migrations (SQLite schema is created ad hoc during this

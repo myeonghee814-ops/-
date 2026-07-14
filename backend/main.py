@@ -5,6 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from api.router import api_router
+from api.routes import search as search_routes
 from core.config import get_settings
 from core.logging import setup_logging
 
@@ -33,6 +34,10 @@ app.add_middleware(
 )
 
 app.include_router(api_router, prefix=settings.API_V1_PREFIX)
+
+# Search is exposed unversioned at /api/search (rather than /api/v1/search)
+# per its spec; every other resource stays under the versioned prefix above.
+app.include_router(search_routes.router, prefix="/api")
 
 
 @app.get("/")
