@@ -23,8 +23,20 @@ export interface PaperAnalysis {
   formation_protocol: string | null
   cycle_condition: string | null
   rate_capability: string | null
+  salt_concentration: string | null
+  solvent_ratio: string | null
+  loading: string | null
+  np_ratio: string | null
+  electrolyte_amount: string | null
+  initial_capacity: string | null
+  capacity_retention: string | null
+  cycle_life: string | null
+  coulombic_efficiency: string | null
+  rate_performance: string | null
+  main_performance_claim: string | null
   main_findings: string[]
   innovation: string | null
+  main_contribution: string | null
   advantages: string[]
   limitations: string[]
   future_work: string[]

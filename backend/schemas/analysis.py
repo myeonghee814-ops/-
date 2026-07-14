@@ -45,8 +45,20 @@ class PaperAnalysis(BaseModel):
     formation_protocol: str | None = None
     cycle_condition: str | None = None
     rate_capability: str | None = None
+    salt_concentration: str | None = None
+    solvent_ratio: str | None = None
+    loading: str | None = None
+    np_ratio: str | None = None
+    electrolyte_amount: str | None = None
+    initial_capacity: str | None = None
+    capacity_retention: str | None = None
+    cycle_life: str | None = None
+    coulombic_efficiency: str | None = None
+    rate_performance: str | None = None
+    main_performance_claim: str | None = None
     main_findings: list[str] = Field(default_factory=list)
     innovation: str | None = None
+    main_contribution: str | None = None
     advantages: list[str] = Field(default_factory=list)
     limitations: list[str] = Field(default_factory=list)
     future_work: list[str] = Field(default_factory=list)

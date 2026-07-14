@@ -44,6 +44,7 @@ def _analysis(i: int) -> PaperAnalysis:
         rate_capability="80% at 5C",
         main_findings=["Improved cycling stability"],
         innovation="Novel additive combination",
+        main_contribution="Demonstrates a co-additive strategy for stable cycling",
         advantages=["Higher capacity retention"],
         limitations=["Limited high-temperature data"],
         future_work=["Test at elevated temperatures"],
@@ -113,7 +114,7 @@ def test_summary_sheet_has_expected_header_and_rows() -> None:
     assert ws.cell(row=2, column=1).value == "Paper 0"
     assert ws.cell(row=2, column=6).value == "Li-ion"
     assert ws.cell(row=2, column=7).value == "1M LiPF6 in EC/DMC"
-    assert ws.cell(row=2, column=8).value == "Novel additive combination"
+    assert ws.cell(row=2, column=8).value == "Demonstrates a co-additive strategy for stable cycling"
     assert ws.cell(row=2, column=9).value == "10.1234/paper.0"
     assert ws.max_row == 4  # header + 3 papers
 

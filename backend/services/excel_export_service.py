@@ -114,7 +114,7 @@ def _build_summary_sheet(wb: Workbook, papers: list[PaperResult], analyses: list
             paper.citation_count if paper.citation_count is not None else 0,
             (analysis.battery_system if analysis else None) or "—",
             (analysis.electrolyte if analysis else None) or "—",
-            (analysis.innovation if analysis else None) or "—",
+            (analysis.main_contribution if analysis else None) or "—",
             paper.doi or "—",
             paper.published_date or "—",
             paper.abstract or "—",

@@ -102,7 +102,7 @@ export default function SearchPage() {
           _id,
           battery_system: analysis?.battery_system ?? null,
           electrolyte: analysis?.electrolyte ?? null,
-          main_contribution: analysis?.innovation ?? null,
+          main_contribution: analysis?.main_contribution ?? null,
         }
       }),
     [data, analysisByRowId],
