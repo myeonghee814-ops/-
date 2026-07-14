@@ -13,6 +13,7 @@ expansion converts that into an effective English Semantic Scholar search
 before anything else runs.
 """
 
+import asyncio
 import json
 
 import httpx
@@ -104,10 +105,12 @@ Respond ONLY with JSON of this exact shape:
 GEMINI_URL_TEMPLATE = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 
 
-async def _generate_json(system_prompt: str, user_payload: dict) -> dict:
+async def _generate_json(system_prompt: str, user_payload: dict, retries: int = 2) -> dict:
     """Call Gemini's native generateContent endpoint in JSON mode and parse
     the response. Uses the ?key= query-param auth Gemini's REST API expects
-    (not an OpenAI-style Authorization header)."""
+    (not an OpenAI-style Authorization header). Retries a couple of times
+    on 429/503 - transient rate-limit/overload responses - before giving up.
+    """
 
     if not settings.gemini_api_key:
         raise RuntimeError(
@@ -123,11 +126,16 @@ async def _generate_json(system_prompt: str, user_payload: dict) -> dict:
     }
 
     async with httpx.AsyncClient() as client:
-        resp = await client.post(
-            url, params={"key": settings.gemini_api_key}, json=body, timeout=60
-        )
-        resp.raise_for_status()
-        data = resp.json()
+        for attempt in range(retries + 1):
+            resp = await client.post(
+                url, params={"key": settings.gemini_api_key}, json=body, timeout=60
+            )
+            if resp.status_code in (429, 503) and attempt < retries:
+                await asyncio.sleep(2 * (attempt + 1))
+                continue
+            resp.raise_for_status()
+            data = resp.json()
+            break
 
     text = data["candidates"][0]["content"]["parts"][0]["text"]
     return json.loads(text)

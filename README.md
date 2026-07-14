@@ -234,7 +234,7 @@ Open http://localhost:5173.
 | Variable | Where | Purpose |
 |---|---|---|
 | `GEMINI_API_KEY` | backend/.env | Required for query expansion, re-ranking, and extraction - free at https://aistudio.google.com/apikey |
-| `GEMINI_MODEL` | backend/.env | Defaults to `gemini-2.0-flash` |
+| `GEMINI_MODEL` | backend/.env | Defaults to `gemini-3.5-flash` |
 | `SEMANTIC_SCHOLAR_API_KEY` | backend/.env | Optional, raises the shared Semantic Scholar rate limit |
 | `CANDIDATE_COUNT` | backend/.env | How many Semantic Scholar candidates feed the re-ranker (default 40) |
 | `TOP_N_RESULTS` | backend/.env | How many ranked results are returned (default 10) |

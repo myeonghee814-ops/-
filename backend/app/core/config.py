@@ -8,7 +8,7 @@ class Settings(BaseSettings):
 
     # Gemini (Google AI Studio) - free tier, no billing required
     gemini_api_key: str = ""
-    gemini_model: str = "gemini-2.0-flash"
+    gemini_model: str = "gemini-3.5-flash"
 
     # Semantic Scholar (optional key raises the shared rate limit)
     semantic_scholar_api_key: str = ""
