@@ -1,0 +1,24 @@
+import { Link, Route, Routes } from "react-router-dom";
+
+import HomePage from "./pages/HomePage";
+import PaperDetailPage from "./pages/PaperDetailPage";
+import SearchResultsPage from "./pages/SearchResultsPage";
+
+export default function App() {
+  return (
+    <div className="app">
+      <header className="app-header">
+        <Link to="/" className="brand">
+          BLIP <span className="brand-sub">Battery Literature Intelligence Platform</span>
+        </Link>
+      </header>
+      <main className="app-main">
+        <Routes>
+          <Route path="/" element={<HomePage />} />
+          <Route path="/search/:searchId" element={<SearchResultsPage />} />
+          <Route path="/paper/:resultId" element={<PaperDetailPage />} />
+        </Routes>
+      </main>
+    </div>
+  );
+}
