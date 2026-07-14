@@ -72,6 +72,14 @@ decisions and what's intentionally missing so far.
 
 ## Getting started
 
+### Can't run it locally? Deploy it for free
+
+See [`docs/DEPLOY.md`](docs/DEPLOY.md) — a click-through guide to deploy
+the frontend to Vercel and the backend to Render's free tier (using
+[`render.yaml`](render.yaml)/[`backend/Dockerfile.render`](backend/Dockerfile.render),
+separate from the `docker-compose.prod.yml` production path) so you can
+try the UI in a browser without installing anything.
+
 ### Quick start (one command)
 
 ```bash

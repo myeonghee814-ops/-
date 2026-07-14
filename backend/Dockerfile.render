@@ -1,0 +1,22 @@
+# Single-stage image for a quick free-tier smoke-test deploy (Render) --
+# see render.yaml and desktop-app/README.md's sibling, docs/DEPLOY.md.
+#
+# Deliberately NOT the multi-stage backend/Dockerfile used by
+# docker-compose.prod.yml: that one requires Postgres and runs Alembic
+# migrations on every start (via entrypoint.sh), which is unnecessary
+# weight for "just let me click a URL and see the UI work" -- the current
+# feature set (search/analyze/compare/export) doesn't touch the database
+# at all, so plain SQLite with no migrations is fine here. Doesn't touch
+# or replace the production Dockerfile/compose path.
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+EXPOSE 8000
+
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
