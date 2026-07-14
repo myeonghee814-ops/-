@@ -6,9 +6,9 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    # OpenAI
-    openai_api_key: str = ""
-    openai_model: str = "gpt-4o-mini"
+    # Gemini (Google AI Studio) - free tier, no billing required
+    gemini_api_key: str = ""
+    gemini_model: str = "gemini-2.0-flash"
 
     # Semantic Scholar (optional key raises the shared rate limit)
     semantic_scholar_api_key: str = ""

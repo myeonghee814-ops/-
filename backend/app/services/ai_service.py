@@ -1,6 +1,8 @@
 """AI stages of the pipeline: bilingual query expansion, relevance
-re-ranking, and battery-metadata extraction, all via the OpenAI Chat
-Completions API in JSON mode.
+re-ranking, and battery-metadata extraction, all via Google's Gemini API
+in JSON mode (called through the OpenAI Python SDK pointed at Gemini's
+OpenAI-compatible endpoint, so no separate SDK is needed). Gemini's free
+tier requires no billing/credit card, unlike the OpenAI API.
 
 The AI is prompted to behave like a senior battery researcher, not a
 generic summarizer: ranking weighs chemistry/electrolyte/cell-type/
@@ -101,13 +103,16 @@ Respond ONLY with JSON of this exact shape:
 """
 
 
+GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
+
+
 def _client() -> AsyncOpenAI:
-    if not settings.openai_api_key:
+    if not settings.gemini_api_key:
         raise RuntimeError(
-            "OPENAI_API_KEY가 설정되지 않았습니다. backend/.env 파일에 추가한 뒤 "
-            "다시 시도해주세요."
+            "GEMINI_API_KEY가 설정되지 않았습니다. backend/.env 파일에 추가한 뒤 "
+            "다시 시도해주세요. (무료 발급: https://aistudio.google.com/apikey)"
         )
-    return AsyncOpenAI(api_key=settings.openai_api_key)
+    return AsyncOpenAI(api_key=settings.gemini_api_key, base_url=GEMINI_BASE_URL)
 
 
 def _truncate(text: str, limit: int = 1000) -> str:
@@ -122,7 +127,7 @@ async def expand_search_query(keyword: str) -> tuple[str, list[str]]:
     client = _client()
     try:
         response = await client.chat.completions.create(
-            model=settings.openai_model,
+            model=settings.gemini_model,
             response_format={"type": "json_object"},
             messages=[
                 {"role": "system", "content": QUERY_EXPANSION_SYSTEM_PROMPT},
@@ -161,7 +166,7 @@ async def rerank_candidates(
     client = _client()
     try:
         response = await client.chat.completions.create(
-            model=settings.openai_model,
+            model=settings.gemini_model,
             response_format={"type": "json_object"},
             messages=[
                 {"role": "system", "content": RANKING_SYSTEM_PROMPT},
@@ -195,7 +200,7 @@ async def extract_battery_analysis(title: str, abstract: str) -> dict:
     client = _client()
     try:
         response = await client.chat.completions.create(
-            model=settings.openai_model,
+            model=settings.gemini_model,
             response_format={"type": "json_object"},
             messages=[
                 {"role": "system", "content": EXTRACTION_SYSTEM_PROMPT},

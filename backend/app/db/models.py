@@ -14,7 +14,7 @@ class Paper(Base):
     """Bibliographic + battery-domain data for one paper.
 
     Keyed by external_paper_id (the Semantic Scholar paper ID) so battery-
-    metadata extraction (an OpenAI call) is reused across searches instead
+    metadata extraction (a Gemini call) is reused across searches instead
     of being re-run every time the same paper resurfaces.
     """
 

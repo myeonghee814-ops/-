@@ -25,7 +25,7 @@ locally. Web deployment is explicitly not the priority.
   - no authentication / user accounts
   - no payments
   - no Docker, no cloud services, no external infra beyond Semantic
-    Scholar + OpenAI
+    Scholar + Gemini
   - the frontend only ever talks to a `localhost` backend URL
     (`VITE_API_BASE_URL`), which is exactly how it will reach the FastAPI
     sidecar once wrapped in Electron
@@ -97,7 +97,7 @@ backend/                   FastAPI app
     schemas/                Pydantic request/response models
     services/
       semantic_scholar_service.py  Stage 2: Semantic Scholar Graph API search
-      ai_service.py         Stage 1, 3 & 4: OpenAI bilingual query expansion,
+      ai_service.py         Stage 1, 3 & 4: Gemini bilingual query expansion,
                              relevance re-ranking (Korean reasoning), and
                              battery metadata/analysis extraction (Korean)
       search_pipeline.py     Orchestrates the full pipeline and persists results
@@ -142,7 +142,7 @@ release/                    electron-builder's output directory (git-ignored;
 ### Why each technology
 
 - **FastAPI (backend)** - async-native, so the pipeline's I/O-bound stages
-  (Semantic Scholar HTTP calls, OpenAI calls) run without blocking; free
+  (Semantic Scholar HTTP calls, Gemini calls) run without blocking; free
   OpenAPI docs at `/docs` for a fast frontend/backend contract during MVP
   iteration. Runs identically today (as a local process you start yourself)
   and later as an Electron sidecar process - no code changes needed for
@@ -161,7 +161,7 @@ release/                    electron-builder's output directory (git-ignored;
   **AI-call cache**: battery metadata extraction is stored per paper (keyed
   by the Semantic Scholar paper ID) in the `papers` table, so a paper that
   resurfaces in a later search reuses its extraction instead of paying for
-  another OpenAI call. Only the relevance score and Korean "추천 이유" are
+  another Gemini call. Only the relevance score and Korean "추천 이유" are
   search-specific (`search_results` table).
 - **React + TypeScript + Vite (frontend)** - Vite gives fast local dev with
   minimal config, and its static production build (`vite build`) is exactly
@@ -180,7 +180,7 @@ release/                    electron-builder's output directory (git-ignored;
     and routing off the URL hash sidesteps both issues, so the exact same
     build works identically over `http://localhost:5173`, packaged in
     Electron, or opened directly as a standalone `.html` file.
-- **OpenAI API (AI)** - one call expands the user's Korean/English/shorthand
+- **Gemini API (AI)** - one call expands the user's Korean/English/shorthand
   keyword into an effective search query, one batched call re-ranks *all*
   Semantic Scholar candidates together (so the model compares them against
   each other, not just against the keyword in isolation) and writes the
@@ -191,16 +191,16 @@ release/                    electron-builder's output directory (git-ignored;
 
 ```
 Keyword (Korean, English, or shorthand e.g. "LiFSI", "TEMPO")
-  -> AI query expansion (ai_service.expand_search_query): one OpenAI call
+  -> AI query expansion (ai_service.expand_search_query): one Gemini call
      translates/expands the keyword into an effective English search query
   -> Semantic Scholar search (semantic_scholar_service): Graph API search
      on the expanded query, ~40 candidates
-  -> AI re-ranking (ai_service.rerank_candidates): one OpenAI call scores
+  -> AI re-ranking (ai_service.rerank_candidates): one Gemini call scores
      every candidate 0-100 on chemistry/electrolyte/cell-type/experimental
      similarity, application relevance, recency, and journal quality -
      plus a concrete Korean "왜 이 논문을 읽어야 하는가" note
   -> Battery metadata extraction (ai_service.extract_battery_analysis):
-     for the top 10, one OpenAI call each extracts cathode/anode/
+     for the top 10, one Gemini call each extracts cathode/anode/
      electrolyte/voltage window/cell type plus Korean experimental
      conditions, performance summary, innovation, advantages, limitations
   -> Persisted to SQLite (SearchQuery + SearchResult + Paper) and returned
@@ -214,7 +214,7 @@ Keyword (Korean, English, or shorthand e.g. "LiFSI", "TEMPO")
 cd backend
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env   # fill in OPENAI_API_KEY
+cp .env.example .env   # fill in GEMINI_API_KEY
 uvicorn app.main:app --reload --port 8000
 ```
 
@@ -233,15 +233,15 @@ Open http://localhost:5173.
 
 | Variable | Where | Purpose |
 |---|---|---|
-| `OPENAI_API_KEY` | backend/.env | Required for query expansion, re-ranking, and extraction |
-| `OPENAI_MODEL` | backend/.env | Defaults to `gpt-4o-mini` |
+| `GEMINI_API_KEY` | backend/.env | Required for query expansion, re-ranking, and extraction - free at https://aistudio.google.com/apikey |
+| `GEMINI_MODEL` | backend/.env | Defaults to `gemini-2.0-flash` |
 | `SEMANTIC_SCHOLAR_API_KEY` | backend/.env | Optional, raises the shared Semantic Scholar rate limit |
 | `CANDIDATE_COUNT` | backend/.env | How many Semantic Scholar candidates feed the re-ranker (default 40) |
 | `TOP_N_RESULTS` | backend/.env | How many ranked results are returned (default 10) |
 | `VITE_API_BASE_URL` | frontend/.env | Backend URL (default `http://localhost:8000`) - this is the same URL shape the app will use once wrapped in Electron and talking to a local sidecar |
 
 A search request runs the full pipeline synchronously and can take
-10-60 seconds depending on OpenAI latency and how many of the top-10 papers
+10-60 seconds depending on Gemini latency and how many of the top-10 papers
 still need metadata extraction - this is intentional for MVP simplicity
 (no background job queue).
 
@@ -251,7 +251,7 @@ still need metadata extraction - this is intentional for MVP simplicity
 `dist/index.html` that runs entirely on canned Korean-mocked data
 (`frontend/src/api/mockData.ts`) instead of calling the real backend - useful
 for reviewing UI/UX changes (e.g. with a non-technical stakeholder) without
-setting up Python or an OpenAI key. It's a single self-contained HTML file:
+setting up Python or a Gemini key. It's a single self-contained HTML file:
 double-clicking it opens the full app in a browser. Never used by the real
 app - `MOCK_API` in `frontend/src/api/client.ts` defaults to off, and normal
 `npm run build`/`npm run dev` are unaffected.

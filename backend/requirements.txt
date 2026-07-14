@@ -2,6 +2,6 @@ fastapi==0.115.6
 uvicorn[standard]==0.32.1
 sqlalchemy==2.0.36
 httpx==0.28.1
-openai==1.58.1
+openai==1.58.1  # client SDK only - pointed at Gemini's OpenAI-compatible endpoint
 pydantic-settings==2.7.0
 python-dotenv==1.0.1
