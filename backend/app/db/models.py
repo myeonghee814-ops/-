@@ -13,15 +13,15 @@ def _utcnow() -> datetime:
 class Paper(Base):
     """Bibliographic + battery-domain data for one paper.
 
-    Keyed by pubmed_id so battery-metadata extraction (an OpenAI call) is
-    reused across searches instead of being re-run every time the same
-    paper resurfaces.
+    Keyed by external_paper_id (the Semantic Scholar paper ID) so battery-
+    metadata extraction (an OpenAI call) is reused across searches instead
+    of being re-run every time the same paper resurfaces.
     """
 
     __tablename__ = "papers"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    pubmed_id: Mapped[str] = mapped_column(String, unique=True, index=True)
+    external_paper_id: Mapped[str] = mapped_column(String, unique=True, index=True)
 
     title: Mapped[str] = mapped_column(Text)
     authors: Mapped[str] = mapped_column(Text, default="")

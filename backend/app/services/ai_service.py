@@ -8,8 +8,8 @@ experimental similarity alongside keyword match and journal/year, and
 every recommendation answers, in natural Korean, "왜 이 논문을 읽어야 하는가?"
 (why should a battery researcher read this). Users search in Korean,
 English, or bare scientific shorthand (e.g. "LiFSI", "TEMPO") - query
-expansion converts that into an effective English PubMed search before
-anything else runs.
+expansion converts that into an effective English Semantic Scholar search
+before anything else runs.
 """
 
 import json
@@ -18,7 +18,7 @@ from openai import AsyncOpenAI
 from openai import OpenAIError
 
 from app.core.config import settings
-from app.services.pubmed_service import Candidate
+from app.services.semantic_scholar_service import Candidate
 
 QUERY_EXPANSION_SYSTEM_PROMPT = """\
 You are a bilingual (Korean/English) search assistant for battery researchers. \
@@ -26,14 +26,14 @@ The user will type a search keyword in Korean, English, or bare scientific \
 shorthand (chemical formulas, abbreviations like LHCE, LiFSI, TEMPO, NCA). \
 The user should never need to know the correct English scientific term.
 
-Expand/translate the keyword into an effective PubMed search query using \
-standard English battery/electrochemistry terminology and relevant synonyms \
-(e.g. an additive abbreviation should be paired with its full chemical name; \
-a Korean material name should be translated to its standard English term). \
-Combine multiple concepts with AND/OR as appropriate for a PubMed query.
+Expand/translate the keyword into an effective academic search-engine query \
+using standard English battery/electrochemistry terminology and relevant \
+synonyms (e.g. an additive abbreviation should be paired with its full \
+chemical name; a Korean material name should be translated to its standard \
+English term). Combine multiple concepts with AND/OR as appropriate.
 
 Respond ONLY with JSON of this exact shape:
-{"english_query": "<PubMed search query string>", "expanded_terms": ["<term1>", "<term2>", ...]}
+{"english_query": "<search query string>", "expanded_terms": ["<term1>", "<term2>", ...]}
 """
 
 RANKING_SYSTEM_PROMPT = """\
@@ -116,7 +116,7 @@ def _truncate(text: str, limit: int = 1000) -> str:
 
 async def expand_search_query(keyword: str) -> tuple[str, list[str]]:
     """Translate/expand a Korean, English, or shorthand keyword into an
-    effective English PubMed search query. Returns (english_query, expanded_terms).
+    effective English Semantic Scholar search query. Returns (english_query, expanded_terms).
     """
 
     client = _client()

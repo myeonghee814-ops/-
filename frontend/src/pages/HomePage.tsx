@@ -25,7 +25,7 @@ export default function HomePage() {
 
   return (
     <div className="home-page">
-      <h1 className="home-title">첫 10개가 아닌, 가장 관련성 높은 배터리 논문을 찾아드립니다.</h1>
+      <h1 className="home-title">가장 관련성 높은 배터리 논문을 찾아드립니다.</h1>
       <p className="home-subtitle">
         키워드를 한글 또는 영어로 입력하세요. BLIP이 문헌을 검색하고, AI가 배터리
         연구자처럼 논문을 재순위화하고 분석합니다.

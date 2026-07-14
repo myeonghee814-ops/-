@@ -24,7 +24,8 @@ locally. Web deployment is explicitly not the priority.
   environment:
   - no authentication / user accounts
   - no payments
-  - no Docker, no cloud services, no external infra beyond PubMed + OpenAI
+  - no Docker, no cloud services, no external infra beyond Semantic
+    Scholar + OpenAI
   - the frontend only ever talks to a `localhost` backend URL
     (`VITE_API_BASE_URL`), which is exactly how it will reach the FastAPI
     sidecar once wrapped in Electron
@@ -51,11 +52,12 @@ natural Korean.
 
 Users should never need to know the right English scientific term. A search
 for `"실리콘 음극 SEI"` or `"TEMPO"` or `"NCA 전해액 첨가제"` all work: before
-querying PubMed, an AI query-expansion step (`ai_service.expand_search_query`)
-translates/expands whatever the user typed - Korean, English, or a bare
-abbreviation - into an effective English PubMed search query, using standard
-scientific terminology and synonyms. The expanded query is stored alongside
-the search (`SearchQuery.expanded_query`) for transparency and debugging.
+querying Semantic Scholar, an AI query-expansion step
+(`ai_service.expand_search_query`) translates/expands whatever the user
+typed - Korean, English, or a bare abbreviation - into an effective English
+search query, using standard scientific terminology and synonyms. The
+expanded query is stored alongside the search (`SearchQuery.expanded_query`)
+for transparency and debugging.
 
 ## Mission
 
@@ -65,7 +67,7 @@ quality over UI polish.
 ## Sprint 1 + Sprint 2 scope (this codebase)
 
 1. Home page with keyword search (Korean or English)
-2. Bilingual query expansion before the PubMed search
+2. Bilingual query expansion before the Semantic Scholar search
 3. Top-10 ranked paper list, Korean UI and Korean AI recommendations
 4. Paper detail page (battery snapshot, experimental conditions, performance,
    innovation, advantages, limitations, abstract, metadata), Korean UI and
@@ -94,7 +96,7 @@ backend/                   FastAPI app
       models.py             Paper, SearchQuery (keyword + expanded_query), SearchResult tables
     schemas/                Pydantic request/response models
     services/
-      pubmed_service.py     Stage 2: PubMed E-utilities search + fetch
+      semantic_scholar_service.py  Stage 2: Semantic Scholar Graph API search
       ai_service.py         Stage 1, 3 & 4: OpenAI bilingual query expansion,
                              relevance re-ranking (Korean reasoning), and
                              battery metadata/analysis extraction (Korean)
@@ -140,18 +142,27 @@ release/                    electron-builder's output directory (git-ignored;
 ### Why each technology
 
 - **FastAPI (backend)** - async-native, so the pipeline's I/O-bound stages
-  (PubMed HTTP calls, OpenAI calls) run without blocking; free OpenAPI docs
-  at `/docs` for a fast frontend/backend contract during MVP iteration. Runs
-  identically today (as a local process you start yourself) and later as an
-  Electron sidecar process - no code changes needed for that transition.
+  (Semantic Scholar HTTP calls, OpenAI calls) run without blocking; free
+  OpenAPI docs at `/docs` for a fast frontend/backend contract during MVP
+  iteration. Runs identically today (as a local process you start yourself)
+  and later as an Electron sidecar process - no code changes needed for
+  that transition.
+- **Semantic Scholar Graph API (literature search)** - not PubMed: PubMed is
+  a biomedical/life-science database and does not meaningfully index most
+  battery/materials-science journals (Journal of Power Sources, Advanced
+  Energy Materials, Joule, Nature Energy, etc.), so it systematically misses
+  exactly the papers a battery researcher needs. Semantic Scholar aggregates
+  across those publishers too, has a free official API, and needs no key for
+  moderate use (`SEMANTIC_SCHOLAR_API_KEY` is optional, only to raise the
+  shared rate limit).
 - **SQLite + SQLAlchemy (database)** - zero-ops, file-based, nothing to run
   or provision locally, and it's exactly the kind of embedded storage a
   desktop app should use (no separate DB server). It doubles as an
   **AI-call cache**: battery metadata extraction is stored per paper (keyed
-  by PubMed ID) in the `papers` table, so a paper that resurfaces in a later
-  search reuses its extraction instead of paying for another OpenAI call.
-  Only the relevance score and Korean "추천 이유" are search-specific
-  (`search_results` table).
+  by the Semantic Scholar paper ID) in the `papers` table, so a paper that
+  resurfaces in a later search reuses its extraction instead of paying for
+  another OpenAI call. Only the relevance score and Korean "추천 이유" are
+  search-specific (`search_results` table).
 - **React + TypeScript + Vite (frontend)** - Vite gives fast local dev with
   minimal config, and its static production build (`vite build`) is exactly
   the artifact an Electron `BrowserWindow` loads - no framework change is
@@ -170,20 +181,20 @@ release/                    electron-builder's output directory (git-ignored;
     build works identically over `http://localhost:5173`, packaged in
     Electron, or opened directly as a standalone `.html` file.
 - **OpenAI API (AI)** - one call expands the user's Korean/English/shorthand
-  keyword into an English PubMed query, one batched call re-ranks *all*
-  PubMed candidates together (so the model compares them against each other,
-  not just against the keyword in isolation) and writes the Korean "why read
-  this" reasoning, and one call per top-10 paper extracts structured battery
-  metadata + Korean research analysis.
+  keyword into an effective search query, one batched call re-ranks *all*
+  Semantic Scholar candidates together (so the model compares them against
+  each other, not just against the keyword in isolation) and writes the
+  Korean "why read this" reasoning, and one call per top-10 paper extracts
+  structured battery metadata + Korean research analysis.
 
 ## Search pipeline
 
 ```
 Keyword (Korean, English, or shorthand e.g. "LiFSI", "TEMPO")
   -> AI query expansion (ai_service.expand_search_query): one OpenAI call
-     translates/expands the keyword into an effective English PubMed query
-  -> PubMed search (pubmed_service): esearch + efetch on the expanded query,
-     ~40 candidates, sorted by PubMed's own relevance
+     translates/expands the keyword into an effective English search query
+  -> Semantic Scholar search (semantic_scholar_service): Graph API search
+     on the expanded query, ~40 candidates
   -> AI re-ranking (ai_service.rerank_candidates): one OpenAI call scores
      every candidate 0-100 on chemistry/electrolyte/cell-type/experimental
      similarity, application relevance, recency, and journal quality -
@@ -203,7 +214,7 @@ Keyword (Korean, English, or shorthand e.g. "LiFSI", "TEMPO")
 cd backend
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env   # fill in OPENAI_API_KEY and NCBI_EMAIL
+cp .env.example .env   # fill in OPENAI_API_KEY
 uvicorn app.main:app --reload --port 8000
 ```
 
@@ -224,9 +235,8 @@ Open http://localhost:5173.
 |---|---|---|
 | `OPENAI_API_KEY` | backend/.env | Required for query expansion, re-ranking, and extraction |
 | `OPENAI_MODEL` | backend/.env | Defaults to `gpt-4o-mini` |
-| `NCBI_EMAIL` | backend/.env | Required by NCBI E-utilities usage policy |
-| `NCBI_API_KEY` | backend/.env | Optional, raises PubMed rate limits |
-| `PUBMED_CANDIDATE_COUNT` | backend/.env | How many PubMed candidates feed the re-ranker (default 40) |
+| `SEMANTIC_SCHOLAR_API_KEY` | backend/.env | Optional, raises the shared Semantic Scholar rate limit |
+| `CANDIDATE_COUNT` | backend/.env | How many Semantic Scholar candidates feed the re-ranker (default 40) |
 | `TOP_N_RESULTS` | backend/.env | How many ranked results are returned (default 10) |
 | `VITE_API_BASE_URL` | frontend/.env | Backend URL (default `http://localhost:8000`) - this is the same URL shape the app will use once wrapped in Electron and talking to a local sidecar |
 

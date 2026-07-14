@@ -1,8 +1,8 @@
 """Orchestrates the full pipeline:
 
-Keyword (Korean/English/shorthand) -> AI query expansion -> PubMed search
--> AI re-ranking (Korean reasoning) -> battery metadata extraction (Korean)
--> persisted SearchQuery/SearchResult/Paper rows.
+Keyword (Korean/English/shorthand) -> AI query expansion -> Semantic
+Scholar search -> AI re-ranking (Korean reasoning) -> battery metadata
+extraction (Korean) -> persisted SearchQuery/SearchResult/Paper rows.
 """
 
 from datetime import datetime, timezone
@@ -11,14 +11,14 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.db.models import Paper, SearchQuery, SearchResult
-from app.services import ai_service, pubmed_service
+from app.services import ai_service, semantic_scholar_service
 
 
-async def _get_or_create_paper(db: Session, candidate: pubmed_service.Candidate) -> Paper:
-    paper = db.query(Paper).filter(Paper.pubmed_id == candidate.pubmed_id).one_or_none()
+async def _get_or_create_paper(db: Session, candidate: semantic_scholar_service.Candidate) -> Paper:
+    paper = db.query(Paper).filter(Paper.external_paper_id == candidate.paper_id).one_or_none()
     if paper is None:
         paper = Paper(
-            pubmed_id=candidate.pubmed_id,
+            external_paper_id=candidate.paper_id,
             title=candidate.title,
             authors=candidate.authors,
             journal=candidate.journal,
@@ -56,7 +56,7 @@ async def run_search(db: Session, keyword: str) -> SearchQuery:
 
     english_query, _expanded_terms = await ai_service.expand_search_query(keyword)
 
-    candidates = await pubmed_service.search_candidates(english_query)
+    candidates = await semantic_scholar_service.search_candidates(english_query)
     if not candidates:
         raise ValueError(f"'{keyword}'에 대한 논문을 찾을 수 없습니다.")
 

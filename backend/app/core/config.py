@@ -10,15 +10,14 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini"
 
-    # PubMed (NCBI E-utilities requires a contact email for high-volume use)
-    ncbi_email: str = "blip-app@example.com"
-    ncbi_api_key: str = ""
+    # Semantic Scholar (optional key raises the shared rate limit)
+    semantic_scholar_api_key: str = ""
 
     # Database
     database_url: str = "sqlite:///./blip.db"
 
     # Search pipeline tuning
-    pubmed_candidate_count: int = 40
+    candidate_count: int = 40
     top_n_results: int = 10
 
     # CORS
