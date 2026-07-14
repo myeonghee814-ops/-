@@ -23,3 +23,6 @@ frontend/*.tsbuildinfo
 .vscode/
 .idea/
 .DS_Store
+
+# Desktop launcher runtime logs (see desktop/start.ps1)
+/logs/
