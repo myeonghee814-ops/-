@@ -1,0 +1,10 @@
+from fastapi import APIRouter
+
+from api.routes import health, papers
+
+# Single aggregation point for all versioned routes. main.py mounts this
+# once under settings.API_V1_PREFIX, so adding a new resource only means
+# adding a router here rather than touching main.py.
+api_router = APIRouter()
+api_router.include_router(health.router)
+api_router.include_router(papers.router)
