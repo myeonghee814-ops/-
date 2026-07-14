@@ -1,0 +1,52 @@
+{
+  "name": "battery-literature-ai",
+  "productName": "Battery Literature AI",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Windows desktop shell (Electron) for the Battery Literature Intelligence Platform (BLIP)",
+  "main": "electron/main.js",
+  "scripts": {
+    "start": "electron .",
+    "build:frontend": "npm --prefix frontend ci && npm --prefix frontend run build",
+    "build:backend:win": "powershell -ExecutionPolicy Bypass -File scripts/build-backend.ps1",
+    "build:backend": "bash scripts/build-backend.sh",
+    "dist:win": "npm run build:frontend && electron-builder --win --x64"
+  },
+  "devDependencies": {
+    "electron": "^33.2.1",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.blip.batteryliteratureai",
+    "productName": "Battery Literature AI",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "electron/**/*",
+      "frontend/dist/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "backend/dist/Battery Literature AI Backend",
+        "to": "backend"
+      }
+    ],
+    "win": {
+      "target": [
+        { "target": "nsis", "arch": ["x64"] },
+        { "target": "portable", "arch": ["x64"] }
+      ]
+    },
+    "nsis": {
+      "artifactName": "${productName} Setup.exe",
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    },
+    "portable": {
+      "artifactName": "${productName}.exe"
+    }
+  }
+}

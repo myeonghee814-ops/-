@@ -30,9 +30,11 @@ locally. Web deployment is explicitly not the priority.
     sidecar once wrapped in Electron
   - SQLite is a single local file - it needs no server, matching how a
     desktop app persists data
-- Electron packaging itself, PDF upload, Excel export, and paper comparison
-  are **not implemented yet** - the architecture is simply kept compatible
-  with adding them later (see "Sprint 3 candidates" below).
+- Electron packaging is implemented (see "Windows desktop build" below): the
+  Electron shell spawns the FastAPI backend as a local sidecar process and
+  loads the built React app in a `BrowserWindow`. PDF upload, Excel export,
+  and paper comparison are **not implemented yet** - the architecture is
+  simply kept compatible with adding them later (see "Sprint 3 candidates").
 
 ## Language policy
 
@@ -69,9 +71,13 @@ quality over UI polish.
    innovation, advantages, limitations, abstract, metadata), Korean UI and
    Korean AI analysis
 
-No comparison, no PDF upload, no Excel export, no auth, no deployment, no
-Electron packaging yet - by design, per the MVP scope. See "Sprint 3
-candidates" for what's intentionally deferred.
+5. Windows desktop packaging: Electron shell + FastAPI sidecar, built via
+   electron-builder into `Battery Literature AI.exe` (portable) and
+   `Battery Literature AI Setup.exe` (installer)
+
+No comparison, no PDF upload, no Excel export, no auth, no cloud deployment
+yet - by design, per the MVP scope. See "Sprint 3 candidates" for what's
+intentionally deferred.
 
 > Note: `ElectrolyteMockScreenerApp.jsx`, `mock_electrolyte_demo_data.py`, and
 > `pubmed_electrolyte_scraper.py` at the repo root are earlier prototypes and
@@ -109,6 +115,26 @@ frontend/                  React + TypeScript (Vite) - all UI text in Korean
     styles/global.css       Single global stylesheet (no CSS framework at MVP stage)
   package.json
   .env.example
+
+electron/                  Electron main process (the desktop shell)
+  main.js                   Spawns the backend sidecar, waits for /api/health,
+                             opens the BrowserWindow, cleans up on quit
+  preload.js                Reserved for future secure IPC (unused for now)
+
+scripts/
+  build-backend.ps1         Windows: PyInstaller-freezes backend/run_server.py
+                             into "Battery Literature AI Backend.exe"
+  build-backend.sh          Same, for Linux/Mac maintainers + CI smoke test
+
+.github/workflows/
+  build-windows.yml         CI: builds the backend exe, the frontend, and the
+                             Electron app on a windows-latest runner; uploads
+                             Battery Literature AI.exe / Setup.exe as artifacts
+
+package.json                Root Electron + electron-builder project (name,
+                             icons, Windows targets, output directory)
+release/                    electron-builder's output directory (git-ignored;
+                             populated by `npm run dist:win` or CI)
 ```
 
 ### Why each technology
@@ -199,13 +225,69 @@ A search request runs the full pipeline synchronously and can take
 still need metadata extraction - this is intentional for MVP simplicity
 (no background job queue).
 
+## Windows desktop build
+
+The target users are non-programmer battery researchers, so the deliverable
+is a double-clickable `.exe` - not a dev server. `electron/main.js` is the
+desktop shell: on launch it spawns the FastAPI backend as a local sidecar
+process (the bundled `Battery Literature AI Backend.exe` in a packaged app,
+or `python3 run_server.py` in dev), waits for `/api/health`, then opens a
+`BrowserWindow` loading the built React app. Nothing about the React or
+FastAPI code changes for this - the frontend already only ever talks to
+`http://localhost:8000`.
+
+### Building it (on Windows, with normal internet access)
+
+```powershell
+npm install                  # installs Electron + electron-builder (root)
+npm run build:backend:win    # PyInstaller-freezes the backend -> backend/dist/Battery Literature AI Backend
+npm run dist:win             # builds the frontend, then runs electron-builder --win
+```
+
+This produces, inside `/release`:
+
+- `Battery Literature AI.exe` - portable, no installation needed
+- `Battery Literature AI Setup.exe` - NSIS installer (Start Menu + desktop shortcuts)
+
+### Continuous Windows build (CI)
+
+`.github/workflows/build-windows.yml` runs the same three steps on a
+GitHub-hosted `windows-latest` runner (triggered manually via
+`workflow_dispatch`, or automatically on any `v*` tag push) and uploads
+`release/*.exe` as a workflow artifact named `battery-literature-ai-windows`.
+This exists so **every Sprint can end with a verified, downloadable Windows
+build** without depending on any one contributor's machine - point a
+teammate (or yourself) at the latest successful run's artifacts instead of
+rebuilding locally.
+
+### Keeping future Sprints desktop-safe
+
+- Never make the frontend depend on being served over `http(s)://` from a
+  real domain (no absolute paths assuming a web host, no browser-only APIs
+  that fail under `file://` + Electron). It already only calls
+  `VITE_API_BASE_URL` (default `http://localhost:8000`).
+- Never make the backend require anything beyond what
+  `pip install -r backend/requirements.txt` provides - PyInstaller freezes
+  exactly that dependency set. If a new dependency does dynamic/plugin-style
+  imports (like `uvicorn` does), it may need its own
+  `--collect-all <package>` flag added to `scripts/build-backend.ps1` /
+  `.sh` and the CI workflow.
+- Any new backend module must be reachable from `app.main:app` (imported,
+  directly or transitively) - PyInstaller only freezes what it can see
+  imported from `run_server.py`.
+- After any backend or frontend change, re-run `npm run dist:win` (or the CI
+  workflow) before calling a Sprint done - "the build passes" means the
+  `.exe` actually launches and can complete a search, not just that
+  `tsc`/`pytest` pass.
+
 ## Sprint 3 candidates (not implemented - awaiting approval)
 
 Out of scope for now, deferred by design; the architecture above is meant
 to accommodate these without rework:
 
-- Electron packaging (wrap the Vite build + run FastAPI as a local sidecar)
 - Excel export of search results
 - Paper comparison view (side-by-side)
 - PDF upload / full-text ingestion
 - A settings page (e.g. editable API key, model choice) instead of `.env`
+- Code signing the Windows build (currently unsigned - Windows SmartScreen
+  will show an "unknown publisher" warning until this is added)

@@ -1,0 +1,55 @@
+name: Build Windows Desktop App
+
+on:
+  workflow_dispatch: {}
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install backend build dependencies
+        working-directory: backend
+        run: |
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build backend executable (Battery Literature AI Backend.exe)
+        working-directory: backend
+        run: >
+          pyinstaller --noconfirm --clean --onedir
+          --name "Battery Literature AI Backend"
+          --collect-all uvicorn
+          run_server.py
+
+      - name: Install and build frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Install Electron/electron-builder
+        run: npm ci
+
+      - name: Build Windows app (NSIS installer + portable exe)
+        run: npx electron-builder --win --x64
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: battery-literature-ai-windows
+          path: release/*.exe
+          if-no-files-found: error
