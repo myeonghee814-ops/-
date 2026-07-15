@@ -15,6 +15,7 @@ before anything else runs.
 
 import asyncio
 import json
+import re
 
 import httpx
 
@@ -104,12 +105,59 @@ Respond ONLY with JSON of this exact shape:
 
 GEMINI_URL_TEMPLATE = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 
+# 429 (quota exceeded) is retried once at most - if the daily free-tier quota
+# is exhausted, a second retry within the same window won't help either.
+# 503 (transient overload) gets a couple of retries since it can clear at
+# any moment.
+_MAX_RETRIES_BY_STATUS = {429: 1, 503: 2}
+_MIN_RETRY_DELAY_SECONDS = 30.0
 
-async def _generate_json(system_prompt: str, user_payload: dict, retries: int = 2) -> dict:
+
+def _retry_delay_seconds(resp: httpx.Response) -> float:
+    """Determine how long to wait before retrying a 429/503 Gemini response.
+    Prefers the server-provided delay (Retry-After header, or the
+    RetryInfo/message text in Gemini's error body) over a fixed backoff -
+    Gemini's daily quota errors ask for ~55s, far longer than a naive
+    fixed delay would allow. Falls back to _MIN_RETRY_DELAY_SECONDS.
+    """
+
+    retry_after = resp.headers.get("retry-after")
+    if retry_after:
+        try:
+            return max(float(retry_after), _MIN_RETRY_DELAY_SECONDS)
+        except ValueError:
+            pass
+
+    try:
+        error = resp.json().get("error", {})
+    except ValueError:
+        error = {}
+
+    for detail in error.get("details", []):
+        if detail.get("@type", "").endswith("RetryInfo"):
+            match = re.match(r"([\d.]+)s?", detail.get("retryDelay", ""))
+            if match:
+                return max(float(match.group(1)), _MIN_RETRY_DELAY_SECONDS)
+
+    match = re.search(r"retry in ([\d.]+)s", error.get("message", ""), re.IGNORECASE)
+    if match:
+        return max(float(match.group(1)), _MIN_RETRY_DELAY_SECONDS)
+
+    return _MIN_RETRY_DELAY_SECONDS
+
+
+def _parse_json_object(text: str) -> dict:
+    """Parse the first valid JSON object out of `text`, tolerating any
+    trailing content Gemini's JSON mode occasionally appends after it."""
+
+    obj, _ = json.JSONDecoder().raw_decode(text.lstrip())
+    return obj
+
+
+async def _generate_json(system_prompt: str, user_payload: dict) -> dict:
     """Call Gemini's native generateContent endpoint in JSON mode and parse
     the response. Uses the ?key= query-param auth Gemini's REST API expects
-    (not an OpenAI-style Authorization header). Retries a couple of times
-    on 429/503 - transient rate-limit/overload responses - before giving up.
+    (not an OpenAI-style Authorization header).
     """
 
     if not settings.gemini_api_key:
@@ -125,20 +173,23 @@ async def _generate_json(system_prompt: str, user_payload: dict, retries: int = 
         "generationConfig": {"responseMimeType": "application/json"},
     }
 
+    attempt = 0
     async with httpx.AsyncClient() as client:
-        for attempt in range(retries + 1):
+        while True:
             resp = await client.post(
                 url, params={"key": settings.gemini_api_key}, json=body, timeout=60
             )
-            if resp.status_code in (429, 503) and attempt < retries:
-                await asyncio.sleep(2 * (attempt + 1))
+            max_retries = _MAX_RETRIES_BY_STATUS.get(resp.status_code, 0)
+            if resp.status_code in (429, 503) and attempt < max_retries:
+                await asyncio.sleep(_retry_delay_seconds(resp))
+                attempt += 1
                 continue
             resp.raise_for_status()
             data = resp.json()
             break
 
     text = data["candidates"][0]["content"]["parts"][0]["text"]
-    return json.loads(text)
+    return _parse_json_object(text)
 
 
 def _truncate(text: str, limit: int = 1000) -> str:
