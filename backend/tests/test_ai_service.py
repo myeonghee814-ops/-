@@ -259,3 +259,53 @@ def test_generate_json_tolerates_trailing_text_end_to_end(monkeypatch, no_sleep)
 
     assert result == {"english_query": "LiFSI"}
     assert client.post.await_count == 2
+
+
+# --- extract_battery_analysis_batch ------------------------------------------
+
+
+def test_extract_battery_analysis_batch_empty_input_skips_the_call(monkeypatch):
+    client = _install_fake_client(monkeypatch, [])
+
+    result = asyncio.run(ai_service.extract_battery_analysis_batch([]))
+
+    assert result == {}
+    assert client.post.await_count == 0
+
+
+def test_extract_battery_analysis_batch_returns_indexed_dict(monkeypatch):
+    payload = {
+        "analyses": [
+            {"index": 0, "cathode": "NCA"},
+            {"index": 1, "cathode": "LFP"},
+        ]
+    }
+    _install_fake_client(monkeypatch, [_ok_response(payload)])
+
+    result = asyncio.run(
+        ai_service.extract_battery_analysis_batch(
+            [("Paper A", "Abstract A"), ("Paper B", "Abstract B")]
+        )
+    )
+
+    assert result == {0: {"index": 0, "cathode": "NCA"}, 1: {"index": 1, "cathode": "LFP"}}
+
+
+def test_extract_battery_analysis_batch_ignores_out_of_range_index(monkeypatch):
+    payload = {"analyses": [{"index": 0, "cathode": "NCA"}, {"index": 5, "cathode": "LFP"}]}
+    _install_fake_client(monkeypatch, [_ok_response(payload)])
+
+    result = asyncio.run(
+        ai_service.extract_battery_analysis_batch([("Paper A", "Abstract A")])
+    )
+
+    assert result == {0: {"index": 0, "cathode": "NCA"}}
+
+
+def test_extract_battery_analysis_batch_wraps_http_error_as_runtime_error(monkeypatch, no_sleep):
+    _install_fake_client(monkeypatch, [_error_response(400, "bad request")])
+
+    with pytest.raises(RuntimeError):
+        asyncio.run(
+            ai_service.extract_battery_analysis_batch([("Paper A", "Abstract A")])
+        )

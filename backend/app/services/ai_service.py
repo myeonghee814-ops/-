@@ -102,6 +102,37 @@ Respond ONLY with JSON of this exact shape:
 }
 """
 
+EXTRACTION_BATCH_SYSTEM_PROMPT = """\
+You are a senior battery researcher extracting structured information from a \
+list of papers (title + abstract) for a Korean colleague who has not read \
+the full papers yet. Be precise and concise. If a field is not discernible \
+from a paper's abstract, use "정보 없음" for that paper - never invent data.
+
+Material/chemistry fields (cathode, anode, electrolyte, voltage_window, \
+cell_type) should use standard scientific notation/formulas (e.g. NCA, \
+NMC811, LiPF6, Li metal) exactly as commonly written even in Korean papers - \
+do not force-translate chemical names. All other fields must be written in \
+natural Korean.
+
+Respond ONLY with JSON of this exact shape, one entry per paper given, \
+covering every index:
+{"analyses": [
+  {
+    "index": <int>,
+    "cathode": "<material, e.g. NCA, NMC811, LFP, or '정보 없음'>",
+    "anode": "<material, e.g. graphite, Li metal, silicon, or '정보 없음'>",
+    "electrolyte": "<electrolyte/additive system, or '정보 없음'>",
+    "voltage_window": "<e.g. '3.0-4.3 V', or '정보 없음'>",
+    "cell_type": "<e.g. coin cell (half-cell), pouch full-cell, or '정보 없음'>",
+    "experimental_conditions": "<Korean, 1-3문장: 사이클링 조건, C-rate, 온도, 테스트 셋업>",
+    "performance_summary": "<Korean, 1-3문장: 용량 유지율, 쿨롱 효율, 율속 특성 등 핵심 정량 결과>",
+    "innovation": "<Korean, 1-2문장: 이 연구의 새로운 점>",
+    "advantages": "<Korean, 1-2문장: 제안된 접근법의 강점>",
+    "limitations": "<Korean, 1-2문장: 명시적 또는 암묵적 한계/트레이드오프>"
+  }, ...
+]}
+"""
+
 
 GEMINI_URL_TEMPLATE = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 
@@ -290,3 +321,40 @@ async def extract_battery_analysis(
         )
     except (httpx.HTTPError, json.JSONDecodeError, KeyError, IndexError) as exc:
         raise RuntimeError(f"AI 배터리 정보 추출에 실패했습니다: {exc}") from exc
+
+
+async def extract_battery_analysis_batch(
+    papers: list[tuple[str, str]], gemini_api_key: str | None = None
+) -> dict[int, dict]:
+    """Extract battery snapshot + Korean research analysis fields for
+    several papers (title, abstract) in a single Gemini call, instead of
+    one call per paper - the common case for a fresh top-N search result.
+
+    Returns {index: analysis} keyed by position in `papers`. An index
+    missing from Gemini's response (a rare JSON-shape slip, not a call
+    failure) is simply absent from the result - the caller falls back to
+    a "정보 없음" default for just that paper instead of retrying.
+    """
+
+    if not papers:
+        return {}
+
+    payload = {
+        "papers": [
+            {"index": i, "title": title, "abstract": _truncate(abstract)}
+            for i, (title, abstract) in enumerate(papers)
+        ]
+    }
+
+    try:
+        data = await _generate_json(EXTRACTION_BATCH_SYSTEM_PROMPT, payload, gemini_api_key)
+    except (httpx.HTTPError, json.JSONDecodeError, KeyError, IndexError) as exc:
+        raise RuntimeError(f"AI 배터리 정보 일괄 추출에 실패했습니다: {exc}") from exc
+
+    results: dict[int, dict] = {}
+    for entry in data.get("analyses", []):
+        idx = entry.get("index")
+        if idx is None or not (0 <= idx < len(papers)):
+            continue
+        results[idx] = entry
+    return results
