@@ -1,13 +1,48 @@
 const { app, BrowserWindow, Menu } = require("electron");
 const path = require("path");
+const fs = require("fs");
 const { spawn } = require("child_process");
 const http = require("http");
+
+// Two instances would both try to spawn a backend on the same hardcoded
+// port - the second one fails to bind and exits, but by then it may have
+// already stolen an in-flight request from the first instance's renderer.
+// Only one instance may run; a second launch just focuses the first.
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+  return;
+}
+
+app.on("second-instance", () => {
+  if (mainWindow) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.focus();
+  }
+});
 
 const BACKEND_PORT = 8000;
 const BACKEND_HEALTH_URL = `http://127.0.0.1:${BACKEND_PORT}/api/health`;
 
 let backendProcess = null;
 let mainWindow = null;
+let logStream = null;
+
+// A double-clicked packaged app has no attached console, so plain
+// console.log/process.stdout.write vanish - this also persists everything
+// to a file so backend errors (e.g. a 500 from a search) can be diagnosed
+// after the fact instead of only when launched from an existing terminal.
+function initLogging() {
+  const logDir = path.join(app.getPath("userData"), "logs");
+  fs.mkdirSync(logDir, { recursive: true });
+  logStream = fs.createWriteStream(path.join(logDir, "backend.log"), { flags: "a" });
+  log(`\n[${new Date().toISOString()}] App starting (packaged=${app.isPackaged}, version=${app.getVersion()})\n`);
+}
+
+function log(text) {
+  process.stdout.write(text);
+  logStream?.write(text);
+}
 
 function resolveBackendCommand() {
   if (app.isPackaged) {
@@ -36,12 +71,13 @@ function resolveBackendCommand() {
 
 function startBackend() {
   const { command, args, cwd } = resolveBackendCommand();
+  log(`[backend] launching: ${command} ${args.join(" ")} (cwd=${cwd})\n`);
   backendProcess = spawn(command, args, { cwd, env: process.env, windowsHide: true });
 
-  backendProcess.stdout?.on("data", (data) => process.stdout.write(`[backend] ${data}`));
-  backendProcess.stderr?.on("data", (data) => process.stderr.write(`[backend] ${data}`));
-  backendProcess.on("error", (err) => console.error("[backend] failed to start:", err));
-  backendProcess.on("exit", (code) => console.log(`[backend] exited with code ${code}`));
+  backendProcess.stdout?.on("data", (data) => log(`[backend] ${data}`));
+  backendProcess.stderr?.on("data", (data) => log(`[backend] ${data}`));
+  backendProcess.on("error", (err) => log(`[backend] failed to start: ${err.stack || err}\n`));
+  backendProcess.on("exit", (code) => log(`[backend] exited with code ${code}\n`));
 }
 
 function waitForBackend(retries = 60) {
@@ -89,13 +125,14 @@ function createWindow() {
 }
 
 app.whenReady().then(async () => {
+  initLogging();
   Menu.setApplicationMenu(null);
 
   startBackend();
   try {
     await waitForBackend();
   } catch (err) {
-    console.error("[backend] not ready:", err.message);
+    log(`[backend] not ready: ${err.message}\n`);
   }
 
   await createWindow();
