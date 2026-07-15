@@ -1,3 +1,4 @@
+import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy.orm import Session
 
@@ -23,6 +24,19 @@ async def create_search(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 429:
+            raise HTTPException(
+                status_code=502,
+                detail="Semantic Scholar 요청 한도 초과. 잠시 후 다시 시도해주세요.",
+            ) from exc
+        raise HTTPException(
+            status_code=502, detail=f"논문 검색 서비스 호출에 실패했습니다: {exc}"
+        ) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=502, detail=f"논문 검색 서비스에 연결할 수 없습니다: {exc}"
+        ) from exc
 
     return SearchResponse(
         search_id=search_query.id,
