@@ -15,6 +15,7 @@ This is the first stage of the pipeline: cast a reasonably wide net
 of just re-sorting a top-10.
 """
 
+import asyncio
 from dataclasses import dataclass
 
 import httpx
@@ -23,6 +24,26 @@ from app.core.config import settings
 
 SEARCH_URL = "https://api.semanticscholar.org/graph/v1/paper/search"
 FIELDS = "title,abstract,venue,year,authors,externalIds"
+
+# Without an API key, requests share Semantic Scholar's public rate-limit
+# pool and get 429s whenever other users are also querying it - unlike
+# Gemini's daily quota, this window clears in seconds, so a short
+# exponential backoff (not Gemini's ~30s minimum) is enough to ride it out.
+_MAX_RETRIES = 3
+_BASE_RETRY_DELAY_SECONDS = 1.0
+
+
+def _retry_delay_seconds(resp: httpx.Response, attempt: int) -> float:
+    """How long to wait before retrying a 429. Prefers the server's
+    Retry-After header when present, exponential backoff otherwise."""
+
+    retry_after = resp.headers.get("retry-after")
+    if retry_after:
+        try:
+            return max(float(retry_after), _BASE_RETRY_DELAY_SECONDS)
+        except ValueError:
+            pass
+    return _BASE_RETRY_DELAY_SECONDS * (2**attempt)
 
 
 @dataclass
@@ -53,10 +74,17 @@ async def search_candidates(query: str, max_results: int | None = None) -> list[
     }
     headers = {"x-api-key": settings.semantic_scholar_api_key} if settings.semantic_scholar_api_key else {}
 
+    attempt = 0
     async with httpx.AsyncClient() as client:
-        resp = await client.get(SEARCH_URL, params=params, headers=headers, timeout=30)
-        resp.raise_for_status()
-        data = resp.json()
+        while True:
+            resp = await client.get(SEARCH_URL, params=params, headers=headers, timeout=30)
+            if resp.status_code == 429 and attempt < _MAX_RETRIES:
+                await asyncio.sleep(_retry_delay_seconds(resp, attempt))
+                attempt += 1
+                continue
+            resp.raise_for_status()
+            data = resp.json()
+            break
 
     candidates: list[Candidate] = []
     for item in data.get("data", []):
