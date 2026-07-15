@@ -193,6 +193,47 @@ def test_generate_json_retries_twice_on_503_then_succeeds(monkeypatch, no_sleep)
     assert no_sleep == [ai_service._MIN_RETRY_DELAY_SECONDS] * 2
 
 
+def test_generate_json_503_retry_cap_is_three(monkeypatch, no_sleep):
+    """A fourth consecutive 503 must NOT be retried again (max 3 retries)."""
+
+    responses = [_error_response(503, "overloaded")] * 4
+    client = _install_fake_client(monkeypatch, responses)
+
+    with pytest.raises(httpx.HTTPStatusError):
+        asyncio.run(ai_service._generate_json("system", {"keyword": "x"}))
+
+    assert client.post.await_count == 4
+    assert no_sleep == [ai_service._MIN_RETRY_DELAY_SECONDS] * 3
+
+
+def test_generate_json_retries_on_timeout_then_succeeds(monkeypatch, no_sleep):
+    responses = [
+        httpx.ReadTimeout("timed out"),
+        _ok_response({"ok": True}),
+    ]
+    client = _install_fake_client(monkeypatch, responses)
+
+    result = asyncio.run(ai_service._generate_json("system", {"keyword": "x"}))
+
+    assert result == {"ok": True}
+    assert client.post.await_count == 2
+    assert no_sleep == [ai_service._TIMEOUT_RETRY_DELAY_SECONDS]
+
+
+def test_generate_json_timeout_retry_cap_is_exhausted(monkeypatch, no_sleep):
+    """After _MAX_TIMEOUT_RETRIES consecutive timeouts, the error must
+    propagate instead of retrying forever."""
+
+    responses = [httpx.ReadTimeout("timed out")] * (ai_service._MAX_TIMEOUT_RETRIES + 1)
+    client = _install_fake_client(monkeypatch, responses)
+
+    with pytest.raises(httpx.ReadTimeout):
+        asyncio.run(ai_service._generate_json("system", {"keyword": "x"}))
+
+    assert client.post.await_count == ai_service._MAX_TIMEOUT_RETRIES + 1
+    assert no_sleep == [ai_service._TIMEOUT_RETRY_DELAY_SECONDS] * ai_service._MAX_TIMEOUT_RETRIES
+
+
 def test_generate_json_non_retryable_error_raises_immediately(monkeypatch, no_sleep):
     responses = [_error_response(400, "bad request")]
     client = _install_fake_client(monkeypatch, responses)

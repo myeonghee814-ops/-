@@ -12,3 +12,4 @@ class SearchResponse(BaseModel):
     keyword: str
     expanded_query: str
     results: list[PaperCard]
+    ai_degraded: bool = False

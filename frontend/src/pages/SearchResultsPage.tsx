@@ -6,6 +6,7 @@ import ErrorMessage from "../components/ErrorMessage";
 import Loading from "../components/Loading";
 import PaperCard from "../components/PaperCard";
 import SearchBar from "../components/SearchBar";
+import WarningMessage from "../components/WarningMessage";
 import type { SearchResponse } from "../api/types";
 
 export default function SearchResultsPage() {
@@ -55,9 +56,12 @@ export default function SearchResultsPage() {
           {data.expanded_query && (
             <p className="results-expanded-query">검색어 확장: {data.expanded_query}</p>
           )}
+          {data.ai_degraded && (
+            <WarningMessage message="Gemini 서버가 일시적으로 혼잡합니다. 잠시 후 다시 시도해주세요." />
+          )}
           <div className="paper-card-list">
             {data.results.map((paper) => (
-              <PaperCard key={paper.result_id} paper={paper} />
+              <PaperCard key={paper.result_id} paper={paper} aiDegraded={data.ai_degraded} />
             ))}
           </div>
         </>

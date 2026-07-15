@@ -185,6 +185,7 @@ export async function mockSearchPapers(keyword: string): Promise<SearchResponse>
     keyword,
     expanded_query: `(${keyword}) AND (lithium battery OR electrolyte OR cathode OR anode)`,
     results,
+    ai_degraded: false,
   };
   searchStore.set(searchId, response);
   return response;

@@ -107,10 +107,16 @@ GEMINI_URL_TEMPLATE = "https://generativelanguage.googleapis.com/v1beta/models/{
 
 # 429 (quota exceeded) is retried once at most - if the daily free-tier quota
 # is exhausted, a second retry within the same window won't help either.
-# 503 (transient overload) gets a couple of retries since it can clear at
-# any moment.
-_MAX_RETRIES_BY_STATUS = {429: 1, 503: 2}
+# 503 (transient overload) gets more retries since it can clear at any moment.
+_MAX_RETRIES_BY_STATUS = {429: 1, 503: 3}
 _MIN_RETRY_DELAY_SECONDS = 30.0
+
+# A hung connection (no response at all) is at least as recoverable as a
+# 503 - retry it the same way, but there's no Retry-After to honor, so a
+# short fixed delay before trying again is enough.
+_MAX_TIMEOUT_RETRIES = 3
+_TIMEOUT_RETRY_DELAY_SECONDS = 3.0
+_REQUEST_TIMEOUT_SECONDS = 15.0
 
 
 def _retry_delay_seconds(resp: httpx.Response) -> float:
@@ -181,11 +187,20 @@ async def _generate_json(system_prompt: str, user_payload: dict, gemini_api_key:
     }
 
     attempt = 0
+    timeout_attempt = 0
     async with httpx.AsyncClient() as client:
         while True:
-            resp = await client.post(
-                url, params={"key": api_key}, json=body, timeout=60
-            )
+            try:
+                resp = await client.post(
+                    url, params={"key": api_key}, json=body, timeout=_REQUEST_TIMEOUT_SECONDS
+                )
+            except httpx.TimeoutException:
+                if timeout_attempt >= _MAX_TIMEOUT_RETRIES:
+                    raise
+                await asyncio.sleep(_TIMEOUT_RETRY_DELAY_SECONDS)
+                timeout_attempt += 1
+                continue
+
             max_retries = _MAX_RETRIES_BY_STATUS.get(resp.status_code, 0)
             if resp.status_code in (429, 503) and attempt < max_retries:
                 await asyncio.sleep(_retry_delay_seconds(resp))

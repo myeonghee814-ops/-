@@ -19,11 +19,9 @@ async def create_search(
 ) -> SearchResponse:
     keyword = request.keyword.strip()
     try:
-        search_query = await run_search(db, keyword, x_gemini_api_key)
+        search_query, ai_degraded = await run_search(db, keyword, x_gemini_api_key)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except RuntimeError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code == 429:
             raise HTTPException(
@@ -43,6 +41,7 @@ async def create_search(
         keyword=search_query.keyword,
         expanded_query=search_query.expanded_query,
         results=[to_paper_card(r) for r in search_query.results],
+        ai_degraded=ai_degraded,
     )
 
 
@@ -57,4 +56,5 @@ def get_search(search_id: int, db: Session = Depends(get_db)) -> SearchResponse:
         keyword=search_query.keyword,
         expanded_query=search_query.expanded_query,
         results=[to_paper_card(r) for r in search_query.results],
+        ai_degraded=search_query.ai_degraded,
     )

@@ -34,4 +34,5 @@ export interface SearchResponse {
   keyword: string;
   expanded_query: string;
   results: PaperCard[];
+  ai_degraded: boolean;
 }

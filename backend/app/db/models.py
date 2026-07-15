@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.database import Base
@@ -60,6 +60,7 @@ class SearchQuery(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     keyword: Mapped[str] = mapped_column(String, index=True)
     expanded_query: Mapped[str] = mapped_column(String, default="")
+    ai_degraded: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
 
     results: Mapped[list["SearchResult"]] = relationship(
