@@ -20,7 +20,10 @@ app = FastAPI(title="BLIP - Battery Literature Intelligence Platform", lifespan=
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[settings.frontend_origin],
+    # "null" is the Origin Chromium sends for file:// pages - i.e. the
+    # packaged Electron app's renderer. settings.frontend_origin covers the
+    # Vite dev server (http://localhost:5173) instead.
+    allow_origins=[settings.frontend_origin, "null"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
