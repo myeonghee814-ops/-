@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy.orm import Session
 
 from app.api.converters import to_paper_card
@@ -11,10 +11,14 @@ router = APIRouter(prefix="/api/search", tags=["search"])
 
 
 @router.post("", response_model=SearchResponse)
-async def create_search(request: SearchRequest, db: Session = Depends(get_db)) -> SearchResponse:
+async def create_search(
+    request: SearchRequest,
+    db: Session = Depends(get_db),
+    x_gemini_api_key: str | None = Header(default=None, alias="X-Gemini-Api-Key"),
+) -> SearchResponse:
     keyword = request.keyword.strip()
     try:
-        search_query = await run_search(db, keyword)
+        search_query = await run_search(db, keyword, x_gemini_api_key)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except RuntimeError as exc:

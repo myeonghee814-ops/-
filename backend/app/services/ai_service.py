@@ -154,16 +154,23 @@ def _parse_json_object(text: str) -> dict:
     return obj
 
 
-async def _generate_json(system_prompt: str, user_payload: dict) -> dict:
+async def _generate_json(system_prompt: str, user_payload: dict, gemini_api_key: str | None = None) -> dict:
     """Call Gemini's native generateContent endpoint in JSON mode and parse
     the response. Uses the ?key= query-param auth Gemini's REST API expects
     (not an OpenAI-style Authorization header).
+
+    `gemini_api_key`, when given, is the caller's own key (e.g. from the
+    X-Gemini-Api-Key header) and takes priority over the server's .env key -
+    this lets each user spend their own free-tier quota instead of sharing
+    the server's.
     """
 
-    if not settings.gemini_api_key:
+    api_key = gemini_api_key or settings.gemini_api_key
+    if not api_key:
         raise RuntimeError(
-            "GEMINI_API_KEY가 설정되지 않았습니다. backend/.env 파일에 추가한 뒤 "
-            "다시 시도해주세요. (무료 발급: https://aistudio.google.com/apikey)"
+            "GEMINI_API_KEY가 설정되지 않았습니다. backend/.env 파일에 추가하거나 "
+            "요청에 본인의 API 키를 포함해 다시 시도해주세요. "
+            "(무료 발급: https://aistudio.google.com/apikey)"
         )
 
     url = GEMINI_URL_TEMPLATE.format(model=settings.gemini_model)
@@ -177,7 +184,7 @@ async def _generate_json(system_prompt: str, user_payload: dict) -> dict:
     async with httpx.AsyncClient() as client:
         while True:
             resp = await client.post(
-                url, params={"key": settings.gemini_api_key}, json=body, timeout=60
+                url, params={"key": api_key}, json=body, timeout=60
             )
             max_retries = _MAX_RETRIES_BY_STATUS.get(resp.status_code, 0)
             if resp.status_code in (429, 503) and attempt < max_retries:
@@ -196,13 +203,17 @@ def _truncate(text: str, limit: int = 1000) -> str:
     return text if len(text) <= limit else text[:limit] + "..."
 
 
-async def expand_search_query(keyword: str) -> tuple[str, list[str]]:
+async def expand_search_query(
+    keyword: str, gemini_api_key: str | None = None
+) -> tuple[str, list[str]]:
     """Translate/expand a Korean, English, or shorthand keyword into an
     effective English Semantic Scholar search query. Returns (english_query, expanded_terms).
     """
 
     try:
-        data = await _generate_json(QUERY_EXPANSION_SYSTEM_PROMPT, {"keyword": keyword})
+        data = await _generate_json(
+            QUERY_EXPANSION_SYSTEM_PROMPT, {"keyword": keyword}, gemini_api_key
+        )
     except (httpx.HTTPError, json.JSONDecodeError, KeyError, IndexError) as exc:
         raise RuntimeError(f"AI 검색어 확장에 실패했습니다: {exc}") from exc
 
@@ -212,7 +223,7 @@ async def expand_search_query(keyword: str) -> tuple[str, list[str]]:
 
 
 async def rerank_candidates(
-    keyword: str, candidates: list[Candidate]
+    keyword: str, candidates: list[Candidate], gemini_api_key: str | None = None
 ) -> list[tuple[Candidate, float, str]]:
     """Score every candidate against the keyword and return them sorted
     best-first as (candidate, relevance_score, why_selected) tuples."""
@@ -235,7 +246,7 @@ async def rerank_candidates(
     }
 
     try:
-        data = await _generate_json(RANKING_SYSTEM_PROMPT, payload)
+        data = await _generate_json(RANKING_SYSTEM_PROMPT, payload, gemini_api_key)
     except (httpx.HTTPError, json.JSONDecodeError, KeyError, IndexError) as exc:
         raise RuntimeError(f"AI 재순위화에 실패했습니다: {exc}") from exc
 
@@ -253,10 +264,14 @@ async def rerank_candidates(
     return scored
 
 
-async def extract_battery_analysis(title: str, abstract: str) -> dict:
+async def extract_battery_analysis(
+    title: str, abstract: str, gemini_api_key: str | None = None
+) -> dict:
     """Extract battery snapshot + Korean research analysis fields for one paper."""
 
     try:
-        return await _generate_json(EXTRACTION_SYSTEM_PROMPT, {"title": title, "abstract": abstract})
+        return await _generate_json(
+            EXTRACTION_SYSTEM_PROMPT, {"title": title, "abstract": abstract}, gemini_api_key
+        )
     except (httpx.HTTPError, json.JSONDecodeError, KeyError, IndexError) as exc:
         raise RuntimeError(f"AI 배터리 정보 추출에 실패했습니다: {exc}") from exc

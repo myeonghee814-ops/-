@@ -14,7 +14,9 @@ from app.db.models import Paper, SearchQuery, SearchResult
 from app.services import ai_service, semantic_scholar_service
 
 
-async def _get_or_create_paper(db: Session, candidate: semantic_scholar_service.Candidate) -> Paper:
+async def _get_or_create_paper(
+    db: Session, candidate: semantic_scholar_service.Candidate, gemini_api_key: str | None = None
+) -> Paper:
     paper = db.query(Paper).filter(Paper.external_paper_id == candidate.paper_id).one_or_none()
     if paper is None:
         paper = Paper(
@@ -30,7 +32,9 @@ async def _get_or_create_paper(db: Session, candidate: semantic_scholar_service.
         db.flush()
 
     if not paper.is_extracted:
-        analysis = await ai_service.extract_battery_analysis(paper.title, paper.abstract)
+        analysis = await ai_service.extract_battery_analysis(
+            paper.title, paper.abstract, gemini_api_key
+        )
         paper.cathode = analysis.get("cathode", "정보 없음")
         paper.anode = analysis.get("anode", "정보 없음")
         paper.electrolyte = analysis.get("electrolyte", "정보 없음")
@@ -47,20 +51,23 @@ async def _get_or_create_paper(db: Session, candidate: semantic_scholar_service.
     return paper
 
 
-async def run_search(db: Session, keyword: str) -> SearchQuery:
+async def run_search(db: Session, keyword: str, gemini_api_key: str | None = None) -> SearchQuery:
     """Run the full pipeline for a keyword and persist the results.
+
+    `gemini_api_key`, when given (e.g. from the caller's X-Gemini-Api-Key
+    header), is used for every AI call instead of the server's .env key.
 
     Returns the SearchQuery row with its `results` relationship populated
     (ordered by rank, best first).
     """
 
-    english_query, _expanded_terms = await ai_service.expand_search_query(keyword)
+    english_query, _expanded_terms = await ai_service.expand_search_query(keyword, gemini_api_key)
 
     candidates = await semantic_scholar_service.search_candidates(english_query)
     if not candidates:
         raise ValueError(f"'{keyword}'에 대한 논문을 찾을 수 없습니다.")
 
-    ranked = await ai_service.rerank_candidates(keyword, candidates)
+    ranked = await ai_service.rerank_candidates(keyword, candidates, gemini_api_key)
     top = ranked[: settings.top_n_results]
 
     search_query = SearchQuery(keyword=keyword, expanded_query=english_query)
@@ -68,7 +75,7 @@ async def run_search(db: Session, keyword: str) -> SearchQuery:
     db.flush()
 
     for rank, (candidate, score, why_selected) in enumerate(top, start=1):
-        paper = await _get_or_create_paper(db, candidate)
+        paper = await _get_or_create_paper(db, candidate, gemini_api_key)
         db.add(
             SearchResult(
                 search_query_id=search_query.id,
