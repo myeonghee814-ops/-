@@ -272,3 +272,68 @@ def expand_with_dictionary(keyword: str) -> tuple[str, list[str]]:
         return _DEFAULT_FALLBACK_QUERY, [_DEFAULT_FALLBACK_QUERY]
 
     return " ".join(terms), terms
+
+
+# --- Chemical category/family detection (additive/solvent field only) -------
+#
+# A user typing "불소계", "F계", "황계 첨가제" etc. into the additive/solvent
+# search field means a CATEGORY of compounds, not a specific one - searching
+# for that literal Korean phrase against Semantic Scholar's English-only
+# index matches nothing, the same failure mode as any other untranslated
+# Hangul (see expand_with_dictionary above). See
+# search_pipeline._expand_additive_category, which uses looks_like_compound_
+# category to decide whether to even call ai_service.expand_compound_category,
+# and expand_category_from_dictionary as that call's own fallback.
+
+# Matches a "<word>계"/"<word>계열" token (불소계, 황계, F계, S계, F계열, ...) -
+# Korean "계"/"계열" as a family/system suffix. Also matches "포함"/"함유"
+# (containing) and English "-based". Not perfectly precise (계 is also a
+# suffix in unrelated words like 계면/관계/단계) but false positives in this
+# specific field are
+# unlikely in practice, and cost only one wasted (gracefully-handled) Gemini
+# call rather than a wrong answer.
+_CATEGORY_SUFFIX_RE = re.compile(r"(?:^|\s)[A-Za-z가-힣]+(?:\s*계열|계)(?:\s|$)")
+_CATEGORY_KEYWORD_RE = re.compile(r"함유|포함|-?based\b", re.IGNORECASE)
+
+
+def looks_like_compound_category(text: str) -> bool:
+    """Best-effort detection of a chemical CATEGORY/FAMILY reference (e.g.
+    "불소계", "F계", "황 함유", "nitrile-based") as opposed to a specific
+    compound name (e.g. "LiFSI", "FEC") in the additive/solvent search
+    field. A false negative just means the raw text is searched as-is (the
+    same experience as before this feature existed) - never a crash."""
+
+    return bool(_CATEGORY_SUFFIX_RE.search(text) or _CATEGORY_KEYWORD_RE.search(text))
+
+
+# Small hand-curated fallback for common electrolyte additive/solvent
+# CATEGORIES, used only when ai_service.expand_compound_category (Gemini) is
+# unavailable - same "hand-curated draft, extend as gaps surface" spirit as
+# TERM_MAP above. Every compound listed here is a real, well-documented
+# battery electrolyte component (verified against published battery
+# electrolyte literature, not guessed) - this is deliberately a short list
+# covering only the most common categories, not an exhaustive taxonomy.
+# Matched as a lowercased substring of the user's input.
+CATEGORY_COMPOUND_MAP: dict[str, list[str]] = {
+    "불소계": ["FEC", "LiFSI", "LiPF6"],
+    "f계": ["FEC", "LiFSI", "LiPF6"],
+    "황계": ["PRS", "sulfolane", "DTD"],
+    "s계": ["PRS", "sulfolane", "DTD"],
+    "인계": ["TPP", "TEP", "TMP"],
+    "p계": ["TPP", "TEP", "TMP"],
+    "질소계": ["succinonitrile", "acetonitrile"],
+    "n계": ["succinonitrile", "acetonitrile"],
+}
+
+
+def expand_category_from_dictionary(category_text: str) -> list[str]:
+    """Fallback for a looks_like_compound_category hit when Gemini is
+    unavailable: look up CATEGORY_COMPOUND_MAP by substring match. Returns
+    [] (never guesses) for any category not in this short list - the caller
+    then falls back further to searching the raw category text as-is."""
+
+    lowered = category_text.lower()
+    for pattern, compounds in CATEGORY_COMPOUND_MAP.items():
+        if pattern in lowered:
+            return compounds
+    return []

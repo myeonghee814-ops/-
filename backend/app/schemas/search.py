@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field, model_validator
 from app.schemas.paper import PaperCard
 
 SortBy = Literal["relevance", "recency"]
-MaterialNoticeLevel = Literal["info", "warning"]
+NoticeLevel = Literal["info", "warning"]
 
 
 class SearchRequest(BaseModel):
@@ -33,9 +33,11 @@ class SearchResponse(BaseModel):
     keyword: str
     material: str
     material_notice: str = ""
-    material_notice_level: MaterialNoticeLevel | None = None
+    material_notice_level: NoticeLevel | None = None
     performance: str
     additive_or_solvent: str
+    additive_notice: str = ""
+    additive_notice_level: NoticeLevel | None = None
     sort_by: SortBy
     expanded_query: str
     results: list[PaperCard]

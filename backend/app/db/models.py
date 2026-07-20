@@ -78,6 +78,8 @@ class SearchQuery(Base):
     material_notice_level: Mapped[str] = mapped_column(String, default="")
     performance: Mapped[str] = mapped_column(String, default="")
     additive_or_solvent: Mapped[str] = mapped_column(String, default="")
+    additive_notice: Mapped[str] = mapped_column(String, default="")
+    additive_notice_level: Mapped[str] = mapped_column(String, default="")
     sort_by: Mapped[str] = mapped_column(String, default="relevance")
     expanded_query: Mapped[str] = mapped_column(String, default="")
     ai_degraded: Mapped[bool] = mapped_column(Boolean, default=False)

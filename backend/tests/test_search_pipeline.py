@@ -216,6 +216,134 @@ def test_run_search_strips_boolean_query_syntax_from_gemini_expansion(monkeypatc
     )
 
 
+# --- additive/solvent chemical-category expansion -----------------------------
+
+
+def test_run_search_expands_additive_category_via_gemini(monkeypatch, db):
+    """A category/family reference in the additive/solvent field (e.g.
+    "불소계") must be expanded into specific compound names before it
+    reaches Semantic Scholar - the bare category word matches no real
+    paper's text, same failure mode as any other untranslated Hangul."""
+
+    async def _fake_expand_category(category_text, gemini_api_key=None):
+        assert category_text == "불소계"
+        return ["LiFSI", "FEC", "LiPF6"]
+
+    captured_queries = []
+
+    async def _fake_search(query, max_results=None):
+        captured_queries.append(query)
+        return [_candidate()]
+
+    monkeypatch.setattr(search_pipeline.ai_service, "expand_compound_category", _fake_expand_category)
+    monkeypatch.setattr(search_pipeline.semantic_scholar_service, "search_candidates", _fake_search)
+    _patch_ai_defaults(monkeypatch, batch=_fake_extract_batch_ok)
+
+    search_query, ai_degraded = asyncio.run(
+        search_pipeline.run_search(db, "NCA", additive_or_solvent="불소계")
+    )
+
+    assert ai_degraded is False
+    assert search_query.additive_notice == "'불소계' → LiFSI, FEC, LiPF6 등으로 확장하여 검색했습니다."
+    assert search_query.additive_notice_level == "info"
+    assert "불소계" not in search_query.keyword
+    assert "LiFSI" in search_query.keyword
+    api_query = captured_queries[0]
+    assert "LiFSI" in api_query and "FEC" in api_query and "LiPF6" in api_query
+
+
+def test_run_search_falls_back_to_category_dictionary_when_gemini_unavailable(monkeypatch, db):
+    async def _fake_expand_category_fails(category_text, gemini_api_key=None):
+        raise RuntimeError("AI 화합물 계열 확장에 실패했습니다: 503")
+
+    monkeypatch.setattr(
+        search_pipeline.ai_service, "expand_compound_category", _fake_expand_category_fails
+    )
+    _patch_ai_defaults(monkeypatch, batch=_fake_extract_batch_ok)
+    _patch_search_candidates(monkeypatch, [_candidate()])
+
+    search_query, ai_degraded = asyncio.run(
+        search_pipeline.run_search(db, "NCA", additive_or_solvent="불소계")
+    )
+
+    assert ai_degraded is True
+    assert search_query.additive_notice_level == "info"
+    assert "LiFSI" in search_query.additive_notice
+    assert "LiFSI" in search_query.keyword
+
+
+def test_run_search_warns_when_category_has_no_fallback_and_gemini_fails(monkeypatch, db):
+    async def _fake_expand_category_fails(category_text, gemini_api_key=None):
+        raise RuntimeError("AI 화합물 계열 확장에 실패했습니다: 503")
+
+    monkeypatch.setattr(
+        search_pipeline.ai_service, "expand_compound_category", _fake_expand_category_fails
+    )
+    _patch_ai_defaults(monkeypatch, batch=_fake_extract_batch_ok)
+    _patch_search_candidates(monkeypatch, [_candidate()])
+
+    search_query, ai_degraded = asyncio.run(
+        search_pipeline.run_search(db, "NCA", additive_or_solvent="이상한계열")
+    )
+
+    assert ai_degraded is True
+    assert search_query.additive_notice_level == "warning"
+    assert "이상한계열" in search_query.keyword
+
+
+def test_run_search_skips_category_expansion_for_a_specific_compound(monkeypatch, db):
+    """A specific compound name (not a category) must never trigger the
+    extra Gemini call at all - only category-like phrasing should."""
+
+    async def _must_not_be_called(category_text, gemini_api_key=None):
+        raise AssertionError("expand_compound_category should not be called for a specific compound")
+
+    monkeypatch.setattr(search_pipeline.ai_service, "expand_compound_category", _must_not_be_called)
+    _patch_ai_defaults(monkeypatch, batch=_fake_extract_batch_ok)
+    _patch_search_candidates(monkeypatch, [_candidate()])
+
+    search_query, ai_degraded = asyncio.run(
+        search_pipeline.run_search(db, "NCA", additive_or_solvent="LiFSI")
+    )
+
+    assert ai_degraded is False
+    assert search_query.additive_notice == ""
+    assert search_query.additive_notice_level == ""
+    assert "LiFSI" in search_query.keyword
+
+
+def test_run_search_retries_with_material_only_when_full_query_returns_zero(monkeypatch, db):
+    """Regression test: Semantic Scholar's relevance search can return 0
+    candidates for a query with several specific terms even though smaller
+    subsets return plenty - observed live, a material name plus 4 compound
+    names from additive-category expansion returned 0, but every 4-term
+    subset of that same 5-term query returned several. Retrying on just the
+    material term (the one field guaranteed to be a real chemistry term) is
+    a cheap second chance before giving up entirely."""
+
+    captured_queries = []
+
+    async def _fake_search(query, max_results=None):
+        captured_queries.append(query)
+        return [_candidate()] if query == "NCA" else []
+
+    async def _fake_expand_category(category_text, gemini_api_key=None):
+        return ["FEC", "LiFSI", "LiTFSI", "DFEC"]
+
+    monkeypatch.setattr(search_pipeline.semantic_scholar_service, "search_candidates", _fake_search)
+    monkeypatch.setattr(search_pipeline.ai_service, "expand_compound_category", _fake_expand_category)
+    _patch_ai_defaults(monkeypatch, batch=_fake_extract_batch_ok)
+
+    search_query, ai_degraded = asyncio.run(
+        search_pipeline.run_search(db, "NCA", additive_or_solvent="불소계")
+    )
+
+    assert len(captured_queries) == 2
+    assert captured_queries[0] != "NCA"
+    assert captured_queries[1] == "NCA"
+    assert len(search_query.results) == 1
+
+
 def test_run_search_falls_back_to_original_order_when_reranking_fails(monkeypatch, db):
     """Full degradation (re-ranking itself failed, every score is 0) must
     keep Semantic Scholar's own order verbatim - NOT re-sort by year, even

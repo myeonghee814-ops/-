@@ -201,6 +201,23 @@ Respond ONLY with JSON of this exact shape:
 }
 """
 
+COMPOUND_CATEGORY_EXPANSION_SYSTEM_PROMPT = """\
+You are a battery electrolyte chemistry expert. The user typed a chemical \
+CATEGORY/FAMILY reference (not a specific compound) into a battery \
+electrolyte additive/solvent search field - e.g. "불소계" (fluorine-based), \
+"황계 첨가제" (sulfur-based additive), "nitrile-based".
+
+List 3-5 well-known, real, specific electrolyte additive/solvent compound \
+names (standard abbreviations/formulas, e.g. LiFSI, FEC, VC, PRS, TPP) that \
+belong to this category and are commonly discussed in battery research. \
+Only include compounds you are confident are real and correctly \
+categorized - never invent a name, and return an empty list rather than \
+guess if you are not confident anything belongs to this category.
+
+Respond ONLY with JSON of this exact shape:
+{"compounds": ["<compound1>", "<compound2>", ...]}
+"""
+
 
 GEMINI_URL_TEMPLATE = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 
@@ -504,3 +521,26 @@ async def extract_deep_analysis(
     except (httpx.HTTPError, json.JSONDecodeError, KeyError, IndexError) as exc:
         _log_gemini_failure("deep analysis", exc)
         raise RuntimeError(f"AI 심층 분석에 실패했습니다: {exc}") from exc
+
+
+async def expand_compound_category(
+    category_text: str, gemini_api_key: str | None = None
+) -> list[str]:
+    """Expands a chemical CATEGORY/FAMILY reference (e.g. "불소계", "황계
+    첨가제") into 3-5 specific, real compound names, for when the additive/
+    solvent search field names a category rather than a specific compound.
+    See battery_term_mapping.looks_like_compound_category, which decides
+    whether this is even worth calling."""
+
+    try:
+        data = await _generate_json(
+            COMPOUND_CATEGORY_EXPANSION_SYSTEM_PROMPT,
+            {"category": category_text},
+            gemini_api_key,
+            stage="compound category expansion",
+        )
+    except (httpx.HTTPError, json.JSONDecodeError, KeyError, IndexError) as exc:
+        _log_gemini_failure("compound category expansion", exc)
+        raise RuntimeError(f"AI 화합물 계열 확장에 실패했습니다: {exc}") from exc
+
+    return [str(c) for c in data.get("compounds", [])]

@@ -353,3 +353,31 @@ def test_extract_deep_analysis_wraps_http_error_as_runtime_error(monkeypatch, no
 
     with pytest.raises(RuntimeError):
         asyncio.run(ai_service.extract_deep_analysis("Paper Title", "Full body text...", []))
+
+
+# --- expand_compound_category -------------------------------------------------
+
+
+def test_expand_compound_category_returns_compound_list(monkeypatch):
+    payload = {"compounds": ["LiFSI", "FEC", "LiPF6"]}
+    client = _install_fake_client(monkeypatch, [_ok_response(payload)])
+
+    result = asyncio.run(ai_service.expand_compound_category("불소계"))
+
+    assert result == ["LiFSI", "FEC", "LiPF6"]
+    assert client.post.await_count == 1
+
+
+def test_expand_compound_category_returns_empty_list_when_gemini_is_unsure(monkeypatch):
+    _install_fake_client(monkeypatch, [_ok_response({"compounds": []})])
+
+    result = asyncio.run(ai_service.expand_compound_category("이상한계열"))
+
+    assert result == []
+
+
+def test_expand_compound_category_wraps_http_error_as_runtime_error(monkeypatch, no_sleep):
+    _install_fake_client(monkeypatch, [_error_response(400, "bad request")])
+
+    with pytest.raises(RuntimeError):
+        asyncio.run(ai_service.expand_compound_category("불소계"))

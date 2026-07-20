@@ -2,6 +2,8 @@
 used when Gemini query expansion fails or the search's time budget is
 already exhausted."""
 
+import pytest
+
 from app.services import battery_term_mapping
 
 
@@ -137,3 +139,45 @@ def test_correct_material_typos_ignores_korean_text():
     assert corrected == "실리콘 음극"
     assert notice is None
     assert level is None
+
+
+# --- looks_like_compound_category --------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "불소계",
+        "F계",
+        "S계",
+        "황계 첨가제",
+        "질소계 용매",
+        "황 함유 첨가제",
+        "불소 포함 용매",
+        "nitrile-based",
+        "이상한계열",
+        "F 계열",
+    ],
+)
+def test_looks_like_compound_category_detects_category_phrasing(text):
+    assert battery_term_mapping.looks_like_compound_category(text) is True
+
+
+@pytest.mark.parametrize("text", ["LiFSI", "FEC", "NCA811", "실리콘 음극", "PRS"])
+def test_looks_like_compound_category_does_not_flag_specific_compounds(text):
+    assert battery_term_mapping.looks_like_compound_category(text) is False
+
+
+# --- expand_category_from_dictionary ------------------------------------------
+
+
+def test_expand_category_from_dictionary_maps_known_category():
+    assert battery_term_mapping.expand_category_from_dictionary("불소계") == ["FEC", "LiFSI", "LiPF6"]
+
+
+def test_expand_category_from_dictionary_is_case_insensitive():
+    assert battery_term_mapping.expand_category_from_dictionary("F계") == battery_term_mapping.expand_category_from_dictionary("f계")
+
+
+def test_expand_category_from_dictionary_returns_empty_for_unknown_category():
+    assert battery_term_mapping.expand_category_from_dictionary("이상한계열") == []

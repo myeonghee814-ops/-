@@ -38,7 +38,7 @@ export interface PaperDetail extends PaperCard {
 }
 
 export type SortBy = "relevance" | "recency";
-export type MaterialNoticeLevel = "info" | "warning";
+export type NoticeLevel = "info" | "warning";
 
 export interface SearchRequest {
   material: string;
@@ -52,9 +52,11 @@ export interface SearchResponse {
   keyword: string;
   material: string;
   material_notice: string;
-  material_notice_level: MaterialNoticeLevel | null;
+  material_notice_level: NoticeLevel | null;
   performance: string;
   additive_or_solvent: string;
+  additive_notice: string;
+  additive_notice_level: NoticeLevel | null;
   sort_by: SortBy;
   expanded_query: string;
   results: PaperCard[];

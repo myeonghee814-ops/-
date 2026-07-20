@@ -205,6 +205,8 @@ export async function mockSearchPapers(request: SearchRequest): Promise<SearchRe
     material_notice_level: null,
     performance: request.performance.trim(),
     additive_or_solvent: request.additive_or_solvent.trim(),
+    additive_notice: "",
+    additive_notice_level: null,
     sort_by: request.sort_by,
     expanded_query: `(${keyword}) AND (lithium battery OR electrolyte OR cathode OR anode)`,
     results,

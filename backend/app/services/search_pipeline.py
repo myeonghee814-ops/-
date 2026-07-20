@@ -1,14 +1,20 @@
 """Orchestrates the full pipeline:
 
-Keyword (Korean/English/shorthand) -> AI query expansion -> Semantic
-Scholar search -> AI re-ranking (Korean reasoning) -> battery metadata
-extraction (Korean, batched) -> persisted SearchQuery/SearchResult/Paper
-rows.
+3-field form (material/performance/additive-or-solvent) -> additive/solvent
+CATEGORY expansion (e.g. "불소계" -> LiFSI/FEC/LiPF6) -> combined keyword ->
+AI query expansion -> Semantic Scholar search -> AI re-ranking (Korean
+reasoning) -> battery metadata extraction (Korean, batched) -> persisted
+SearchQuery/SearchResult/Paper rows.
 
 The whole pipeline is bounded by _SEARCH_TIME_BUDGET_SECONDS: every
 Gemini-calling phase is awaited with whatever time remains in the budget,
 so a slow/overloaded Gemini degrades the result instead of hanging the
-request. Two stages have a non-Gemini fallback instead of just giving up:
+request. Three stages have a non-Gemini fallback instead of just giving up:
+- additive/solvent category expansion (`_expand_additive_category`) falls
+  back to `battery_term_mapping`'s small curated CATEGORY_COMPOUND_MAP, then
+  to searching the raw category text as-is if even that has no entry -
+  searching a bare category word (rather than the specific compounds it
+  refers to) matches nothing useful in a paper's title/abstract.
 - query expansion falls back to `battery_term_mapping`'s static Korean ->
   English dictionary instead of sending raw Korean text to Semantic
   Scholar's English-only index. Any Korean word the dictionary has no
@@ -19,8 +25,8 @@ request. Two stages have a non-Gemini fallback instead of just giving up:
   Scholar's own order - `_apply_relevance_safety_filter`'s lexical-overlap
   demotion still runs on top as an independent second safety net, in case
   BM25 itself misbehaves.
-Both fallback stages log a distinct "falling back to..." line on entry -
-grepping for that text over time is a proxy for how often Gemini itself
+All three fallback stages log a distinct "falling back to..." line on entry
+- grepping for that text over time is a proxy for how often Gemini itself
 is failing (quota, overload, or the search time budget).
 Battery metadata extraction still falls back to plain "정보 없음"
 placeholders - there is no non-AI substitute for reading an abstract. Its
@@ -278,25 +284,82 @@ async def _extract_papers(
     return degraded
 
 
+async def _expand_additive_category(
+    additive_or_solvent: str, gemini_api_key: str | None, deadline: float
+) -> tuple[str, str, str, bool]:
+    """If `additive_or_solvent` looks like a chemical CATEGORY/FAMILY
+    reference (e.g. "불소계", "황계 첨가제") rather than a specific compound
+    name, expands it into 3-5 real compound names via Gemini - falling back
+    to a small curated dictionary, then to the raw text unchanged - so
+    Semantic Scholar gets concrete chemistry to search for instead of a
+    vague category word that matches no real paper's text (the same failure
+    mode as any other untranslated Hangul).
+
+    Returns (text actually used to build the search keyword, a Korean
+    notice describing what happened or "" if nothing needed explaining, a
+    notice_level of "info"/"warning", and whether this stage degraded -
+    i.e. Gemini's answer wasn't used, regardless of whether the dictionary
+    fallback still found something useful).
+    """
+
+    if not additive_or_solvent or not battery_term_mapping.looks_like_compound_category(
+        additive_or_solvent
+    ):
+        return additive_or_solvent, "", "", False
+
+    compounds: list[str] = []
+    remaining = deadline - time.monotonic()
+    if remaining > 0:
+        try:
+            compounds = await asyncio.wait_for(
+                ai_service.expand_compound_category(additive_or_solvent, gemini_api_key),
+                timeout=remaining,
+            )
+        except (RuntimeError, TimeoutError) as exc:
+            if isinstance(exc, TimeoutError):
+                logger.warning(
+                    "Compound category expansion aborted: %.1fs search time budget exhausted",
+                    remaining,
+                )
+            logger.warning(
+                "Compound category expansion falling back to static dictionary (Gemini unavailable)"
+            )
+
+    if compounds:
+        notice = f"'{additive_or_solvent}' → {', '.join(compounds)} 등으로 확장하여 검색했습니다."
+        return " ".join(compounds), notice, "info", False
+
+    fallback_compounds = battery_term_mapping.expand_category_from_dictionary(additive_or_solvent)
+    if fallback_compounds:
+        notice = f"'{additive_or_solvent}' → {', '.join(fallback_compounds)} 등으로 확장하여 검색했습니다."
+        return " ".join(fallback_compounds), notice, "info", True
+
+    notice = f"'{additive_or_solvent}'를 구체적 화합물로 확장하지 못해 원문 그대로 검색합니다."
+    return additive_or_solvent, notice, "warning", True
+
+
 async def run_search(
     db: Session,
-    keyword: str,
+    material: str,
     gemini_api_key: str | None = None,
     *,
-    material: str = "",
     material_notice: str = "",
     material_notice_level: str = "",
     performance: str = "",
     additive_or_solvent: str = "",
     sort_by: str = "relevance",
 ) -> tuple[SearchQuery, bool]:
-    """Run the full pipeline for a keyword and persist the results.
+    """Run the full pipeline for the 3-field search form and persist the
+    results.
 
-    `keyword` is the single combined search string the pipeline (query
-    expansion, Semantic Scholar, re-ranking) actually operates on;
-    `material`/`performance`/`additive_or_solvent` are the structured
-    fields it was built from (from the UI's 3-field search form) and are
-    persisted alongside it purely so a later "search again" can repopulate
+    `material` (already typo-corrected by the caller via
+    `battery_term_mapping.correct_material_typos`), `performance`, and
+    `additive_or_solvent` are combined internally into the single keyword
+    string the pipeline (query expansion, Semantic Scholar, re-ranking)
+    actually operates on - `additive_or_solvent` is expanded first if it
+    looks like a chemical category rather than a specific compound (see
+    `_expand_additive_category`). All three raw fields are also persisted
+    as-is on the SearchQuery purely so a later "search again" can repopulate
     the same 3 boxes - they play no other role in the pipeline itself.
     `material_notice` is the (already-computed, by the caller) Korean
     notice from `battery_term_mapping.correct_material_typos`, persisted
@@ -337,6 +400,12 @@ async def run_search(
     ai_degraded = False
     deadline = time.monotonic() + _SEARCH_TIME_BUDGET_SECONDS
 
+    expanded_additive, additive_notice, additive_notice_level, additive_degraded = (
+        await _expand_additive_category(additive_or_solvent, gemini_api_key, deadline)
+    )
+    ai_degraded = ai_degraded or additive_degraded
+    keyword = " ".join(part for part in (material, performance, expanded_additive) if part)
+
     remaining = deadline - time.monotonic()
     if remaining <= 0:
         logger.warning("Query expansion falling back to static dictionary (search time budget already exhausted)")
@@ -364,6 +433,23 @@ async def run_search(
     api_query = _api_search_query(english_query)
     logger.info("Semantic Scholar API query (from display query %r): %r", english_query, api_query)
     candidates = await semantic_scholar_service.search_candidates(api_query)
+    if not candidates:
+        # Observed live: Semantic Scholar's relevance search can return
+        # exactly 0 candidates for a query with several specific terms
+        # (e.g. a material name plus 4-5 compound names from additive-
+        # category expansion) even though every 4-term subset of the same
+        # query returns several - it gets stricter as term count grows
+        # rather than more permissive. Retrying on just the material term
+        # (the one field guaranteed to be a real, searchable chemistry
+        # term) is a cheap second chance before giving up entirely.
+        fallback_query = _api_search_query(material)
+        if fallback_query and fallback_query != api_query:
+            logger.warning(
+                "Semantic Scholar returned 0 candidates for %r - retrying with just the material term: %r",
+                api_query,
+                fallback_query,
+            )
+            candidates = await semantic_scholar_service.search_candidates(fallback_query)
     if not candidates:
         raise ValueError(f"'{keyword}'에 대한 논문을 찾을 수 없습니다.")
 
@@ -417,6 +503,8 @@ async def run_search(
         material_notice_level=material_notice_level,
         performance=performance,
         additive_or_solvent=additive_or_solvent,
+        additive_notice=additive_notice,
+        additive_notice_level=additive_notice_level,
         sort_by=sort_by,
         expanded_query=english_query,
     )

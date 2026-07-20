@@ -24,13 +24,11 @@ async def create_search(
     material, material_notice, material_notice_level = battery_term_mapping.correct_material_typos(
         request.material
     )
-    keyword = " ".join(part for part in (material, request.performance, request.additive_or_solvent) if part)
     try:
         search_query, ai_degraded = await run_search(
             db,
-            keyword,
+            material,
             x_gemini_api_key,
-            material=material,
             material_notice=material_notice or "",
             material_notice_level=material_notice_level or "",
             performance=request.performance,
@@ -61,6 +59,8 @@ async def create_search(
         material_notice_level=search_query.material_notice_level or None,
         performance=search_query.performance,
         additive_or_solvent=search_query.additive_or_solvent,
+        additive_notice=search_query.additive_notice,
+        additive_notice_level=search_query.additive_notice_level or None,
         sort_by=search_query.sort_by,
         expanded_query=search_query.expanded_query,
         results=[to_paper_card(r) for r in search_query.results],
@@ -82,6 +82,8 @@ def get_search(search_id: int, db: Session = Depends(get_db)) -> SearchResponse:
         material_notice_level=search_query.material_notice_level or None,
         performance=search_query.performance,
         additive_or_solvent=search_query.additive_or_solvent,
+        additive_notice=search_query.additive_notice,
+        additive_notice_level=search_query.additive_notice_level or None,
         sort_by=search_query.sort_by,
         expanded_query=search_query.expanded_query,
         results=[to_paper_card(r) for r in search_query.results],
