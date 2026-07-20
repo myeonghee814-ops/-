@@ -92,3 +92,73 @@ def test_rerank_locally_scores_higher_for_more_term_repetition():
 
     scored_by_id = {c.paper_id: score for c, score, _ in ranked}
     assert scored_by_id["p1"] >= scored_by_id["p2"]
+
+
+# --- domain-relevance bonus/penalty (ambiguous-acronym disambiguation) -------
+
+
+def test_has_battery_domain_keyword_detects_battery_terms():
+    assert local_reranker.has_battery_domain_keyword("A study on lithium-ion battery electrolytes.")
+    assert local_reranker.has_battery_domain_keyword("Coin cell cycling performance evaluation.")
+
+
+def test_has_battery_domain_keyword_ignores_bare_cell():
+    """Bare "cell" is deliberately excluded - it would false-positive on
+    "cellular network"/"stem cell" etc., exactly the kind of off-domain
+    content this list exists to help exclude."""
+
+    assert not local_reranker.has_battery_domain_keyword("A cellular network protocol for 5G.")
+
+
+def test_has_off_domain_keyword_detects_networking_terms():
+    assert local_reranker.has_off_domain_keyword("A forward error correction scheme for wireless networks.")
+    assert local_reranker.has_off_domain_keyword("LDPC codes for channel coding.")
+
+
+def test_has_off_domain_keyword_ignores_battery_text():
+    assert not local_reranker.has_off_domain_keyword("Silicon anode SEI stabilization via novel binder.")
+
+
+def test_domain_score_adjustment_penalty_dominates_bonus():
+    """A text matching both an off-domain and a battery keyword (e.g. "FEC"
+    mentioned in a networking paper that also happens to say "battery" in
+    passing) must still net out strongly negative - the penalty exists
+    specifically to overrule a coincidental battery-keyword match."""
+
+    adjustment = local_reranker.domain_score_adjustment(
+        "Forward error correction for battery-powered wireless sensor networks."
+    )
+    assert adjustment < 0
+
+
+def test_rerank_locally_demotes_off_domain_candidate_below_unrelated_one():
+    """The core acronym-collision scenario: "FEC" as a query term lexically
+    overlaps with a networking paper's title just as much as with a real
+    battery paper's - domain_score_adjustment must still push the
+    networking paper to the very bottom, below even an unrelated
+    (non-off-domain) candidate with zero overlap."""
+
+    battery_paper = _candidate(
+        "p1",
+        "FEC additive for lithium-ion battery electrolyte stabilization",
+        "Fluoroethylene carbonate (FEC) improves SEI formation on the anode.",
+    )
+    networking_paper = _candidate(
+        "p2",
+        "FEC schemes for wireless network reliability",
+        "Forward error correction (FEC) improves packet loss resilience.",
+    )
+    unrelated_paper = _candidate(
+        "p3",
+        "A cooking recipe archive",
+        "Nothing about batteries or networking here.",
+    )
+
+    ranked = local_reranker.rerank_locally("FEC battery electrolyte", ["FEC"], [
+        networking_paper,
+        unrelated_paper,
+        battery_paper,
+    ])
+
+    assert [c.paper_id for c, _, _ in ranked][0] == "p1"
+    assert [c.paper_id for c, _, _ in ranked][-1] == "p2"

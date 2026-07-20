@@ -98,19 +98,34 @@ _HANGUL_RE = re.compile(r"[가-힣]+")
 _BOOLEAN_SYNTAX_RE = re.compile(r"[\"'“”()]|\b(?:AND|OR)\b", re.IGNORECASE)
 
 
+# Appended to every outgoing Semantic Scholar query, regardless of source
+# (Gemini or dictionary fallback) - many battery-relevant abbreviations are
+# genuinely ambiguous across fields (e.g. "FEC" = fluoroethylene carbonate
+# here, but forward error correction in networking), and Semantic Scholar's
+# plain-text search has no way to know which field was meant. These are
+# common, generic words that match the vast majority of real battery papers,
+# so they bias the ranking toward battery-domain results without narrowing
+# the candidate pool the way another *specific* term would (see the
+# material-only retry below for why piling on specific terms can backfire).
+_BATTERY_CONTEXT_SUFFIX = "lithium-ion battery electrolyte"
+
+
 def _api_search_query(english_query: str) -> str:
     """Derive the string actually sent to Semantic Scholar from the
     (possibly Hangul-containing, possibly boolean-syntax-containing) display
     query: strips leftover Hangul (see battery_term_mapping above) and any
     quote/parenthesis/AND/OR boolean syntax the relevance-search endpoint
-    doesn't understand, leaving a plain space-separated keyword list. Never
-    returns an empty string - falls back to the untouched query if stripping
-    would remove everything, since a degraded search beats none."""
+    doesn't understand, leaving a plain space-separated keyword list, then
+    appends _BATTERY_CONTEXT_SUFFIX so an ambiguous abbreviation is biased
+    toward its battery-domain meaning. Falls back to the untouched query
+    (plus the suffix) if stripping would remove everything, since a
+    degraded search beats none."""
 
     stripped = _HANGUL_RE.sub(" ", english_query)
     stripped = _BOOLEAN_SYNTAX_RE.sub(" ", stripped)
     stripped = " ".join(stripped.split())
-    return stripped or english_query
+    base = stripped or english_query
+    return f"{base} {_BATTERY_CONTEXT_SUFFIX}"
 
 
 def _significant_terms(english_query: str, expanded_terms: list[str]) -> set[str]:
@@ -138,27 +153,43 @@ def _apply_relevance_safety_filter(
 ) -> list[tuple["semantic_scholar_service.Candidate", float, str]]:
     """Safety net for when AI re-ranking itself failed: without Gemini's
     semantic judgment, fall back to plain lexical overlap between the
-    (expanded) search terms and each candidate's title/abstract. Candidates
-    with no overlap at all are pushed to the bottom (not dropped outright,
-    so a too-strict match never leaves fewer than top_n_results papers);
-    candidates within each bucket keep Semantic Scholar's original relative
-    order - this filter only demotes, it never re-sorts by year/recency.
+    (expanded) search terms and each candidate's title/abstract, demoted
+    into three buckets (each keeping Semantic Scholar's original relative
+    order - this filter only demotes, it never re-sorts by year/recency):
+    1. query-term overlap (or no `terms` to check at all)
+    2. no query-term overlap
+    3. an OFF_DOMAIN_KEYWORDS match (see local_reranker) - always last,
+       regardless of terms-overlap, since an ambiguous abbreviation (e.g.
+       "FEC" matching a networking paper instead of fluoroethylene
+       carbonate) can lexically overlap with the query while still being
+       off-topic. Never drops candidates outright, so a too-strict match
+       never leaves fewer than top_n_results papers.
     """
+
+    off_domain = []
+    remaining = []
+    for item in ranked:
+        candidate = item[0]
+        haystack = f"{candidate.title} {candidate.abstract}".lower()
+        if local_reranker.has_off_domain_keyword(haystack):
+            off_domain.append(item)
+        else:
+            remaining.append(item)
 
     terms = _significant_terms(english_query, expanded_terms)
     if not terms:
-        return ranked
+        return remaining + off_domain
 
     overlapping = []
     non_overlapping = []
-    for item in ranked:
+    for item in remaining:
         candidate = item[0]
         haystack = f"{candidate.title} {candidate.abstract}".lower()
         if any(term in haystack for term in terms):
             overlapping.append(item)
         else:
             non_overlapping.append(item)
-    return overlapping + non_overlapping
+    return overlapping + non_overlapping + off_domain
 
 
 def _sort_key(

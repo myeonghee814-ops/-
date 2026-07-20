@@ -105,6 +105,23 @@ def _patch_ai_defaults(monkeypatch, *, expand=_fake_expand_ok, rerank=_fake_rera
         monkeypatch.setattr(search_pipeline.ai_service, "extract_battery_analysis", individual)
 
 
+# --- _api_search_query --------------------------------------------------------
+
+
+def test_api_search_query_appends_battery_context_suffix():
+    """Every outgoing Semantic Scholar query gets the battery-context
+    suffix appended, regardless of source - disambiguates acronyms that
+    mean something else in other fields (e.g. "FEC" = fluoroethylene
+    carbonate here, forward error correction in networking)."""
+
+    assert search_pipeline._api_search_query("FEC") == "FEC lithium-ion battery electrolyte"
+
+
+def test_api_search_query_appends_suffix_after_hangul_and_boolean_stripping():
+    result = search_pipeline._api_search_query('("Mid-Ni" OR "고전압")')
+    assert result == "Mid-Ni lithium-ion battery electrolyte"
+
+
 def test_run_search_happy_path_not_degraded(monkeypatch, db):
     _patch_ai_defaults(
         monkeypatch,
@@ -325,7 +342,7 @@ def test_run_search_retries_with_material_only_when_full_query_returns_zero(monk
 
     async def _fake_search(query, max_results=None):
         captured_queries.append(query)
-        return [_candidate()] if query == "NCA" else []
+        return [_candidate()] if query.startswith("NCA ") else []
 
     async def _fake_expand_category(category_text, gemini_api_key=None):
         return ["FEC", "LiFSI", "LiTFSI", "DFEC"]
@@ -339,8 +356,8 @@ def test_run_search_retries_with_material_only_when_full_query_returns_zero(monk
     )
 
     assert len(captured_queries) == 2
-    assert captured_queries[0] != "NCA"
-    assert captured_queries[1] == "NCA"
+    assert not captured_queries[0].startswith("NCA ")
+    assert captured_queries[1].startswith("NCA ")
     assert len(search_query.results) == 1
 
 
@@ -400,6 +417,54 @@ def test_run_search_demotes_lexically_unrelated_candidates_when_reranking_fails(
 
     assert ai_degraded is True
     assert [r.paper.title for r in search_query.results] == [related.title, unrelated.title]
+
+
+def test_run_search_demotes_off_domain_candidate_below_lexically_unrelated_one(monkeypatch, db):
+    """Regression test for the FEC acronym-collision scenario: a networking
+    paper that happens to lexically overlap with the query term ("FEC")
+    must still sink below a candidate with NO overlap at all, once an
+    OFF_DOMAIN_KEYWORDS match is detected - lexical overlap alone isn't
+    enough to trust a candidate is actually on-topic."""
+
+    async def _fake_expand_fec(keyword, gemini_api_key=None):
+        return "FEC battery electrolyte", ["FEC"]
+
+    _patch_ai_defaults(
+        monkeypatch, expand=_fake_expand_fec, rerank=_fake_rerank_fails, batch=_fake_extract_batch_ok
+    )
+    networking = semantic_scholar_service.Candidate(
+        paper_id="p1",
+        title="FEC schemes for wireless network reliability",
+        authors="Author A",
+        journal="Journal X",
+        year=2024,
+        doi="10.1/x",
+        abstract="Forward error correction (FEC) improves packet loss resilience.",
+    )
+    unrelated = semantic_scholar_service.Candidate(
+        paper_id="p2",
+        title="A cooking recipe archive",
+        authors="Author B",
+        journal="Journal Y",
+        year=2023,
+        doi="10.1/y",
+        abstract="A collection of recipes for home cooking, unrelated to any technical field.",
+    )
+    battery = semantic_scholar_service.Candidate(
+        paper_id="p3",
+        title="FEC additive for lithium-ion battery electrolyte stabilization",
+        authors="Author C",
+        journal="Journal Z",
+        year=2022,
+        doi="10.1/z",
+        abstract="Fluoroethylene carbonate (FEC) improves SEI formation on the anode.",
+    )
+    _patch_search_candidates(monkeypatch, [networking, unrelated, battery])
+
+    search_query, ai_degraded = asyncio.run(search_pipeline.run_search(db, "FEC"))
+
+    assert ai_degraded is True
+    assert [r.paper.title for r in search_query.results] == [battery.title, unrelated.title, networking.title]
 
 
 def test_run_search_falls_back_to_individual_calls_when_batch_fails(monkeypatch, db):

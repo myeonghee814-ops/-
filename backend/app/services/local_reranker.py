@@ -10,6 +10,13 @@ naturally sink to the bottom when sorted - the same outcome
 `search_pipeline._apply_relevance_safety_filter` produces by demotion, kept
 in place alongside this as a second, independent safety net in case this
 scoring has a bug of its own.
+
+BM25 is lexical-overlap-only, so it can't tell that a candidate matched an
+acronym in the wrong field (e.g. "FEC" = fluoroethylene carbonate here, but
+forward error correction in networking) - `domain_score_adjustment` adds a
+small independent bonus/penalty on top, based on whether the candidate's
+title/abstract actually looks like battery research at all. See
+BATTERY_DOMAIN_KEYWORDS/OFF_DOMAIN_KEYWORDS below.
 """
 
 import math
@@ -33,6 +40,93 @@ _BM25_K1 = 1.5
 _BM25_B = 0.75
 
 LOCAL_RERANK_WHY_SELECTED = "검색어 키워드 일치도 기준으로 정렬됨 (AI 재순위화 실패로 로컬 폴백 적용)"
+
+# Domain-relevance signal, independent of query-term overlap: some acronyms
+# used in the search query are genuinely ambiguous across fields (e.g. "FEC"
+# is fluoroethylene carbonate here, but forward error correction in
+# networking) - Semantic Scholar's plain-text search has no way to know
+# which field the user meant, so it can return off-topic candidates that
+# happen to share the literal acronym. This nudges battery-relevant
+# candidates up and pushes clearly-off-domain ones to the bottom, on top of
+# (not instead of) the BM25 lexical-overlap score above. Deliberately a
+# short, hand-picked list (same "extend as gaps surface" spirit as
+# battery_term_mapping's TERM_MAP), not an exhaustive taxonomy. Journal name
+# is intentionally NOT checked here - a journal whitelist/blocklist is a
+# separate, higher-maintenance mechanism to consider later.
+#
+# "cell" is deliberately NOT included bare - it collides with "cellular
+# network"/"stem cell" etc., which would defeat the point of this list for
+# exactly the kind of off-domain (telecom) content it exists to demote.
+BATTERY_DOMAIN_KEYWORDS = {
+    "battery",
+    "batteries",
+    "electrolyte",
+    "cathode",
+    "anode",
+    "lithium-ion",
+    "lithium ion",
+    "li-ion",
+    "li-s",
+    "lithium-sulfur",
+    "solid electrolyte interphase",
+    "sei",
+    "cei",
+    "coulombic efficiency",
+    "capacity retention",
+    "cycling stability",
+    "coin cell",
+    "pouch cell",
+    "full cell",
+    "half cell",
+}
+
+OFF_DOMAIN_KEYWORDS = {
+    "forward error correction",
+    "wireless",
+    "wireless network",
+    "network coding",
+    "channel coding",
+    "transport protocol",
+    "ldpc",
+    "turbo code",
+    "convolutional code",
+    "bit error rate",
+    "packet loss",
+    "modulation",
+    "5g",
+    "4g",
+    "real-time communication",
+}
+
+# Bonus is modest - a tie-breaking nudge on top of the real BM25 lexical
+# signal, not a replacement for it. Penalty is deliberately huge relative to
+# any realistic BM25 score, so an off-domain match always sinks to (or near)
+# the bottom after normalization, regardless of how strong its raw lexical
+# overlap happens to be.
+_BATTERY_DOMAIN_BONUS = 3.0
+_OFF_DOMAIN_PENALTY = 1000.0
+
+
+def has_battery_domain_keyword(text: str) -> bool:
+    lowered = text.lower()
+    return any(keyword in lowered for keyword in BATTERY_DOMAIN_KEYWORDS)
+
+
+def has_off_domain_keyword(text: str) -> bool:
+    lowered = text.lower()
+    return any(keyword in lowered for keyword in OFF_DOMAIN_KEYWORDS)
+
+
+def domain_score_adjustment(text: str) -> float:
+    """Score delta from domain-relevance keywords in `text` (title+abstract) -
+    add to a candidate's raw relevance score before normalizing."""
+
+    adjustment = 0.0
+    if has_battery_domain_keyword(text):
+        adjustment += _BATTERY_DOMAIN_BONUS
+    if has_off_domain_keyword(text):
+        adjustment -= _OFF_DOMAIN_PENALTY
+    return adjustment
 
 
 def _tokenize(text: str) -> list[str]:
@@ -144,10 +238,14 @@ def rerank_locally(
         docs.append(_Doc(candidate=candidate, token_counts=Counter(tokens), length=len(tokens) or 1))
 
     raw_scores = _score_bm25(query_terms, docs)
-    if all(score == 0.0 for score in raw_scores):
+    adjusted_scores = [
+        score + domain_score_adjustment(f"{doc.candidate.title} {doc.candidate.abstract}")
+        for score, doc in zip(raw_scores, docs)
+    ]
+    if all(score == 0.0 for score in adjusted_scores):
         return [(c, 0.0, "") for c in candidates]
 
-    normalized = _normalize_to_100(raw_scores)
+    normalized = _normalize_to_100(adjusted_scores)
     scored = [
         (doc.candidate, score, LOCAL_RERANK_WHY_SELECTED if score > 0 else "")
         for doc, score in zip(docs, normalized)
