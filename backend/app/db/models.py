@@ -39,10 +39,7 @@ class Paper(Base):
 
     # Research analysis
     experimental_conditions: Mapped[str] = mapped_column(Text, default="")
-    performance_summary: Mapped[str] = mapped_column(Text, default="")
-    innovation: Mapped[str] = mapped_column(Text, default="")
-    advantages: Mapped[str] = mapped_column(Text, default="")
-    limitations: Mapped[str] = mapped_column(Text, default="")
+    result_summary: Mapped[str] = mapped_column(Text, default="")
 
     extracted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
@@ -59,6 +56,12 @@ class SearchQuery(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     keyword: Mapped[str] = mapped_column(String, index=True)
+    material: Mapped[str] = mapped_column(String, default="")
+    material_notice: Mapped[str] = mapped_column(String, default="")
+    material_notice_level: Mapped[str] = mapped_column(String, default="")
+    performance: Mapped[str] = mapped_column(String, default="")
+    additive_or_solvent: Mapped[str] = mapped_column(String, default="")
+    sort_by: Mapped[str] = mapped_column(String, default="relevance")
     expanded_query: Mapped[str] = mapped_column(String, default="")
     ai_degraded: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)

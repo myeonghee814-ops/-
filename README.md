@@ -45,8 +45,7 @@ language is raw bibliographic data taken directly from the source paper:
 **paper title, journal name, DOI, and author names remain in English**
 (translating those would misrepresent the source). Everything the AI
 generates as an explanation - relevance reasoning, experimental conditions,
-performance summary, innovation, advantages, limitations - is written in
-natural Korean.
+result summary - is written in natural Korean.
 
 ## Search: Korean and English, transparently
 
@@ -69,9 +68,8 @@ quality over UI polish.
 1. Home page with keyword search (Korean or English)
 2. Bilingual query expansion before the Semantic Scholar search
 3. Top-10 ranked paper list, Korean UI and Korean AI recommendations
-4. Paper detail page (battery snapshot, experimental conditions, performance,
-   innovation, advantages, limitations, abstract, metadata), Korean UI and
-   Korean AI analysis
+4. Paper detail page (battery snapshot, experimental conditions, result
+   summary, abstract, metadata), Korean UI and Korean AI analysis
 
 5. Windows desktop packaging: Electron shell + FastAPI sidecar, built via
    electron-builder into `Battery Literature AI.exe` (portable) and
@@ -202,7 +200,7 @@ Keyword (Korean, English, or shorthand e.g. "LiFSI", "TEMPO")
   -> Battery metadata extraction (ai_service.extract_battery_analysis):
      for the top 10, one Gemini call each extracts cathode/anode/
      electrolyte/voltage window/cell type plus Korean experimental
-     conditions, performance summary, innovation, advantages, limitations
+     conditions and one merged result summary
   -> Persisted to SQLite (SearchQuery + SearchResult + Paper) and returned
 ```
 

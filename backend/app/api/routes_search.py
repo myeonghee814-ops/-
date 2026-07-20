@@ -6,6 +6,7 @@ from app.api.converters import to_paper_card
 from app.db.database import get_db
 from app.db.models import SearchQuery
 from app.schemas.search import SearchRequest, SearchResponse
+from app.services import battery_term_mapping
 from app.services.search_pipeline import run_search
 
 router = APIRouter(prefix="/api/search", tags=["search"])
@@ -17,9 +18,25 @@ async def create_search(
     db: Session = Depends(get_db),
     x_gemini_api_key: str | None = Header(default=None, alias="X-Gemini-Api-Key"),
 ) -> SearchResponse:
-    keyword = request.keyword.strip()
+    # Typo correction runs unconditionally, before Gemini is even called -
+    # a cleaned-up material name benefits a successful Gemini call too,
+    # not just the dictionary fallback in battery_term_mapping.
+    material, material_notice, material_notice_level = battery_term_mapping.correct_material_typos(
+        request.material
+    )
+    keyword = " ".join(part for part in (material, request.performance, request.additive_or_solvent) if part)
     try:
-        search_query, ai_degraded = await run_search(db, keyword, x_gemini_api_key)
+        search_query, ai_degraded = await run_search(
+            db,
+            keyword,
+            x_gemini_api_key,
+            material=material,
+            material_notice=material_notice or "",
+            material_notice_level=material_notice_level or "",
+            performance=request.performance,
+            additive_or_solvent=request.additive_or_solvent,
+            sort_by=request.sort_by,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except httpx.HTTPStatusError as exc:
@@ -39,6 +56,12 @@ async def create_search(
     return SearchResponse(
         search_id=search_query.id,
         keyword=search_query.keyword,
+        material=search_query.material,
+        material_notice=search_query.material_notice,
+        material_notice_level=search_query.material_notice_level or None,
+        performance=search_query.performance,
+        additive_or_solvent=search_query.additive_or_solvent,
+        sort_by=search_query.sort_by,
         expanded_query=search_query.expanded_query,
         results=[to_paper_card(r) for r in search_query.results],
         ai_degraded=ai_degraded,
@@ -54,6 +77,12 @@ def get_search(search_id: int, db: Session = Depends(get_db)) -> SearchResponse:
     return SearchResponse(
         search_id=search_query.id,
         keyword=search_query.keyword,
+        material=search_query.material,
+        material_notice=search_query.material_notice,
+        material_notice_level=search_query.material_notice_level or None,
+        performance=search_query.performance,
+        additive_or_solvent=search_query.additive_or_solvent,
+        sort_by=search_query.sort_by,
         expanded_query=search_query.expanded_query,
         results=[to_paper_card(r) for r in search_query.results],
         ai_degraded=search_query.ai_degraded,

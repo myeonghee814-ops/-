@@ -88,25 +88,56 @@ body {
   margin: 0 auto 2rem;
 }
 
-/* Search bar */
-.search-bar-wrapper {
+/* Search form (3-field: material / performance / additive-solvent) */
+.search-form {
   max-width: 640px;
   margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  text-align: left;
 }
 
-.search-bar {
+.search-field {
   display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.search-field-label {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.search-field-required {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--color-accent);
+  margin-left: 0.35rem;
+}
+
+.search-field-optional {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--color-text-dim);
+  margin-left: 0.35rem;
+}
+
+.search-field-chips {
+  display: flex;
+  flex-wrap: wrap;
   gap: 0.5rem;
 }
 
 .search-input {
-  flex: 1;
   padding: 0.85rem 1rem;
   border-radius: 8px;
   border: 1px solid var(--color-border);
   background: var(--color-surface);
   color: var(--color-text);
   font-size: 1rem;
+  width: 100%;
 }
 
 .search-input:focus {
@@ -114,6 +145,7 @@ body {
 }
 
 .search-button {
+  align-self: flex-end;
   padding: 0.85rem 1.5rem;
   border-radius: 8px;
   border: none;
@@ -133,14 +165,6 @@ body {
   cursor: not-allowed;
 }
 
-.example-keywords {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  justify-content: center;
-  margin-top: 1rem;
-}
-
 .example-chip {
   padding: 0.4rem 0.8rem;
   border-radius: 999px;
@@ -154,6 +178,53 @@ body {
 .example-chip:hover:not(:disabled) {
   border-color: var(--color-accent);
   color: var(--color-text);
+}
+
+.example-chip-active {
+  border-color: var(--color-accent);
+  background: var(--color-accent-dim);
+  color: var(--color-text);
+}
+
+/* Sort-by toggle */
+.sort-toggle {
+  display: inline-flex;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  overflow: hidden;
+  width: fit-content;
+}
+
+.sort-toggle-option {
+  padding: 0.5rem 1rem;
+  border: none;
+  background: var(--color-surface);
+  color: var(--color-text-dim);
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.sort-toggle-option:not(:first-child) {
+  border-left: 1px solid var(--color-border);
+}
+
+.sort-toggle-option:hover:not(:disabled) {
+  color: var(--color-text);
+}
+
+.sort-toggle-option:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.sort-toggle-option-active {
+  background: var(--color-accent);
+  color: white;
+}
+
+.sort-toggle-option-active:hover:not(:disabled) {
+  color: white;
 }
 
 /* Loading / error */
@@ -193,6 +264,16 @@ body {
   background: rgba(180, 83, 9, 0.08);
   border: 1px solid var(--color-medium);
   color: var(--color-medium);
+  padding: 1rem;
+  border-radius: 8px;
+  margin-top: 1.5rem;
+  text-align: center;
+}
+
+.info-message {
+  background: rgba(30, 122, 76, 0.08);
+  border: 1px solid var(--color-accent);
+  color: var(--color-accent);
   padding: 1rem;
   border-radius: 8px;
   margin-top: 1.5rem;

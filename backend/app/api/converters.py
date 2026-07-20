@@ -30,10 +30,7 @@ def to_paper_detail(result: SearchResult) -> PaperDetail:
     return PaperDetail(
         **card.model_dump(),
         experimental_conditions=paper.experimental_conditions,
-        performance_summary=paper.performance_summary,
-        innovation=paper.innovation,
-        advantages=paper.advantages,
-        limitations=paper.limitations,
+        result_summary=paper.result_summary,
         abstract=paper.abstract,
         keyword=result.search_query.keyword,
     )

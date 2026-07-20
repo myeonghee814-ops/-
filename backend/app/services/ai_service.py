@@ -15,12 +15,37 @@ before anything else runs.
 
 import asyncio
 import json
+import logging
 import re
 
 import httpx
 
 from app.core.config import settings
 from app.services.semantic_scholar_service import Candidate
+
+logger = logging.getLogger(__name__)
+
+
+def _log_gemini_failure(stage: str, exc: Exception) -> None:
+    """Every Gemini-calling stage degrades silently to the caller (that's
+    the whole point of ai_degraded), but the actual cause - 429 quota
+    exceeded vs. 503 overloaded vs. a timeout vs. something else entirely -
+    would otherwise be lost. Logging it here is the only way to tell those
+    apart after the fact from the server console/log file."""
+
+    if isinstance(exc, httpx.HTTPStatusError):
+        logger.warning(
+            "Gemini %s failed: HTTP %s - %s",
+            stage,
+            exc.response.status_code,
+            exc.response.text[:500],
+        )
+    elif isinstance(exc, httpx.TimeoutException):
+        logger.warning("Gemini %s failed: request timed out (%s)", stage, exc)
+    elif isinstance(exc, httpx.HTTPError):
+        logger.warning("Gemini %s failed: network error - %s", stage, exc)
+    else:
+        logger.warning("Gemini %s failed: %s - %s", stage, type(exc).__name__, exc)
 
 QUERY_EXPANSION_SYSTEM_PROMPT = """\
 You are a bilingual (Korean/English) search assistant for battery researchers. \
@@ -95,10 +120,8 @@ Respond ONLY with JSON of this exact shape:
   "voltage_window": "<e.g. '3.0-4.3 V', or '정보 없음'>",
   "cell_type": "<e.g. coin cell (half-cell), pouch full-cell, or '정보 없음'>",
   "experimental_conditions": "<Korean, 1-3문장: 사이클링 조건, C-rate, 온도, 테스트 셋업>",
-  "performance_summary": "<Korean, 1-3문장: 용량 유지율, 쿨롱 효율, 율속 특성 등 핵심 정량 결과>",
-  "innovation": "<Korean, 1-2문장: 이 연구의 새로운 점>",
-  "advantages": "<Korean, 1-2문장: 제안된 접근법의 강점>",
-  "limitations": "<Korean, 1-2문장: 명시적 또는 암묵적 한계/트레이드오프>"
+  "result_summary": "<Korean, 2-4문장: 핵심 정량 결과(용량 유지율, 쿨롱 효율, 율속 특성 등), \
+이 연구의 새로운 점, 강점, 한계를 하나로 종합한 요약>"
 }
 """
 
@@ -125,10 +148,8 @@ covering every index:
     "voltage_window": "<e.g. '3.0-4.3 V', or '정보 없음'>",
     "cell_type": "<e.g. coin cell (half-cell), pouch full-cell, or '정보 없음'>",
     "experimental_conditions": "<Korean, 1-3문장: 사이클링 조건, C-rate, 온도, 테스트 셋업>",
-    "performance_summary": "<Korean, 1-3문장: 용량 유지율, 쿨롱 효율, 율속 특성 등 핵심 정량 결과>",
-    "innovation": "<Korean, 1-2문장: 이 연구의 새로운 점>",
-    "advantages": "<Korean, 1-2문장: 제안된 접근법의 강점>",
-    "limitations": "<Korean, 1-2문장: 명시적 또는 암묵적 한계/트레이드오프>"
+    "result_summary": "<Korean, 2-4문장: 핵심 정량 결과(용량 유지율, 쿨롱 효율, 율속 특성 등), \
+이 연구의 새로운 점, 강점, 한계를 하나로 종합한 요약>"
   }, ...
 ]}
 """
@@ -191,7 +212,13 @@ def _parse_json_object(text: str) -> dict:
     return obj
 
 
-async def _generate_json(system_prompt: str, user_payload: dict, gemini_api_key: str | None = None) -> dict:
+async def _generate_json(
+    system_prompt: str,
+    user_payload: dict,
+    gemini_api_key: str | None = None,
+    *,
+    stage: str = "Gemini call",
+) -> dict:
     """Call Gemini's native generateContent endpoint in JSON mode and parse
     the response. Uses the ?key= query-param auth Gemini's REST API expects
     (not an OpenAI-style Authorization header).
@@ -200,6 +227,13 @@ async def _generate_json(system_prompt: str, user_payload: dict, gemini_api_key:
     X-Gemini-Api-Key header) and takes priority over the server's .env key -
     this lets each user spend their own free-tier quota instead of sharing
     the server's.
+
+    Every attempt's outcome (429/503 status, or a timeout) is logged as it
+    happens, not just once the whole call finally gives up - the pipeline's
+    own search-time-budget can cancel this coroutine mid-retry (a plain
+    TimeoutError from the caller's asyncio.wait_for, not from httpx), which
+    would otherwise erase the actual HTTP cause with no trace of it ever
+    having been observed.
     """
 
     api_key = gemini_api_key or settings.gemini_api_key
@@ -209,6 +243,12 @@ async def _generate_json(system_prompt: str, user_payload: dict, gemini_api_key:
             "요청에 본인의 API 키를 포함해 다시 시도해주세요. "
             "(무료 발급: https://aistudio.google.com/apikey)"
         )
+
+    logger.info(
+        "Gemini %s: using %s API key",
+        stage,
+        "caller-provided (X-Gemini-Api-Key)" if gemini_api_key else "server .env",
+    )
 
     url = GEMINI_URL_TEMPLATE.format(model=settings.gemini_model)
     body = {
@@ -226,6 +266,12 @@ async def _generate_json(system_prompt: str, user_payload: dict, gemini_api_key:
                     url, params={"key": api_key}, json=body, timeout=_REQUEST_TIMEOUT_SECONDS
                 )
             except httpx.TimeoutException:
+                logger.warning(
+                    "Gemini %s: request timed out (attempt %d/%d)",
+                    stage,
+                    timeout_attempt + 1,
+                    _MAX_TIMEOUT_RETRIES + 1,
+                )
                 if timeout_attempt >= _MAX_TIMEOUT_RETRIES:
                     raise
                 await asyncio.sleep(_TIMEOUT_RETRY_DELAY_SECONDS)
@@ -233,10 +279,19 @@ async def _generate_json(system_prompt: str, user_payload: dict, gemini_api_key:
                 continue
 
             max_retries = _MAX_RETRIES_BY_STATUS.get(resp.status_code, 0)
-            if resp.status_code in (429, 503) and attempt < max_retries:
-                await asyncio.sleep(_retry_delay_seconds(resp))
-                attempt += 1
-                continue
+            if resp.status_code in (429, 503):
+                logger.warning(
+                    "Gemini %s: HTTP %s received (attempt %d/%d) - %s",
+                    stage,
+                    resp.status_code,
+                    attempt + 1,
+                    max_retries + 1,
+                    resp.text[:300],
+                )
+                if attempt < max_retries:
+                    await asyncio.sleep(_retry_delay_seconds(resp))
+                    attempt += 1
+                    continue
             resp.raise_for_status()
             data = resp.json()
             break
@@ -258,9 +313,10 @@ async def expand_search_query(
 
     try:
         data = await _generate_json(
-            QUERY_EXPANSION_SYSTEM_PROMPT, {"keyword": keyword}, gemini_api_key
+            QUERY_EXPANSION_SYSTEM_PROMPT, {"keyword": keyword}, gemini_api_key, stage="query expansion"
         )
     except (httpx.HTTPError, json.JSONDecodeError, KeyError, IndexError) as exc:
+        _log_gemini_failure("query expansion", exc)
         raise RuntimeError(f"AI 검색어 확장에 실패했습니다: {exc}") from exc
 
     english_query = str(data.get("english_query", "")).strip() or keyword
@@ -292,8 +348,9 @@ async def rerank_candidates(
     }
 
     try:
-        data = await _generate_json(RANKING_SYSTEM_PROMPT, payload, gemini_api_key)
+        data = await _generate_json(RANKING_SYSTEM_PROMPT, payload, gemini_api_key, stage="re-ranking")
     except (httpx.HTTPError, json.JSONDecodeError, KeyError, IndexError) as exc:
+        _log_gemini_failure("re-ranking", exc)
         raise RuntimeError(f"AI 재순위화에 실패했습니다: {exc}") from exc
 
     rankings = data.get("rankings", [])
@@ -317,9 +374,13 @@ async def extract_battery_analysis(
 
     try:
         return await _generate_json(
-            EXTRACTION_SYSTEM_PROMPT, {"title": title, "abstract": abstract}, gemini_api_key
+            EXTRACTION_SYSTEM_PROMPT,
+            {"title": title, "abstract": abstract},
+            gemini_api_key,
+            stage="battery extraction (individual)",
         )
     except (httpx.HTTPError, json.JSONDecodeError, KeyError, IndexError) as exc:
+        _log_gemini_failure("battery extraction (individual)", exc)
         raise RuntimeError(f"AI 배터리 정보 추출에 실패했습니다: {exc}") from exc
 
 
@@ -347,8 +408,11 @@ async def extract_battery_analysis_batch(
     }
 
     try:
-        data = await _generate_json(EXTRACTION_BATCH_SYSTEM_PROMPT, payload, gemini_api_key)
+        data = await _generate_json(
+            EXTRACTION_BATCH_SYSTEM_PROMPT, payload, gemini_api_key, stage="battery extraction (batch)"
+        )
     except (httpx.HTTPError, json.JSONDecodeError, KeyError, IndexError) as exc:
+        _log_gemini_failure("battery extraction (batch)", exc)
         raise RuntimeError(f"AI 배터리 정보 일괄 추출에 실패했습니다: {exc}") from exc
 
     results: dict[int, dict] = {}

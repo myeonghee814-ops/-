@@ -31,9 +31,6 @@ class PaperDetail(PaperCard):
     the full research analysis and abstract."""
 
     experimental_conditions: str
-    performance_summary: str
-    innovation: str
-    advantages: str
-    limitations: str
+    result_summary: str
     abstract: str
     keyword: str

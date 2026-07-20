@@ -64,10 +64,7 @@ export default function PaperDetailPage() {
       </section>
 
       <Section title="실험 조건">{paper.experimental_conditions}</Section>
-      <Section title="주요 성능">{paper.performance_summary}</Section>
-      <Section title="혁신 포인트">{paper.innovation}</Section>
-      <Section title="장점">{paper.advantages}</Section>
-      <Section title="한계">{paper.limitations}</Section>
+      <Section title="핵심 실험 결과 요약">{paper.result_summary}</Section>
       <Section title="초록">{paper.abstract}</Section>
 
       <section className="detail-section">

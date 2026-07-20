@@ -21,17 +21,30 @@ export interface PaperCard {
 
 export interface PaperDetail extends PaperCard {
   experimental_conditions: string;
-  performance_summary: string;
-  innovation: string;
-  advantages: string;
-  limitations: string;
+  result_summary: string;
   abstract: string;
   keyword: string;
+}
+
+export type SortBy = "relevance" | "recency";
+export type MaterialNoticeLevel = "info" | "warning";
+
+export interface SearchRequest {
+  material: string;
+  performance: string;
+  additive_or_solvent: string;
+  sort_by: SortBy;
 }
 
 export interface SearchResponse {
   search_id: number;
   keyword: string;
+  material: string;
+  material_notice: string;
+  material_notice_level: MaterialNoticeLevel | null;
+  performance: string;
+  additive_or_solvent: string;
+  sort_by: SortBy;
   expanded_query: string;
   results: PaperCard[];
   ai_degraded: boolean;

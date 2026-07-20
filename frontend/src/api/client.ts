@@ -1,4 +1,4 @@
-import type { PaperDetail, SearchResponse } from "./types";
+import type { PaperDetail, SearchRequest, SearchResponse } from "./types";
 import { mockGetPaperDetail, mockGetSearch, mockSearchPapers } from "./mockData";
 import { getApiKey } from "../lib/apiKey";
 
@@ -17,8 +17,8 @@ async function handleResponse<T>(res: Response): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-export async function searchPapers(keyword: string): Promise<SearchResponse> {
-  if (MOCK_API) return mockSearchPapers(keyword);
+export async function searchPapers(request: SearchRequest): Promise<SearchResponse> {
+  if (MOCK_API) return mockSearchPapers(request);
 
   const apiKey = getApiKey();
   const res = await fetch(`${API_BASE_URL}/api/search`, {
@@ -27,7 +27,7 @@ export async function searchPapers(keyword: string): Promise<SearchResponse> {
       "Content-Type": "application/json",
       ...(apiKey ? { "X-Gemini-Api-Key": apiKey } : {}),
     },
-    body: JSON.stringify({ keyword }),
+    body: JSON.stringify(request),
   });
   return handleResponse<SearchResponse>(res);
 }

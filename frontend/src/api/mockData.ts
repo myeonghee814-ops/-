@@ -4,7 +4,7 @@
  * without the FastAPI backend or an OpenAI API key. Not used unless that
  * flag is set at build time; the real app always hits the real backend.
  */
-import type { BatterySnapshot, PaperCard, PaperDetail, SearchResponse } from "./types";
+import type { BatterySnapshot, PaperCard, PaperDetail, SearchRequest, SearchResponse } from "./types";
 
 interface SamplePaper {
   title: string;
@@ -16,10 +16,7 @@ interface SamplePaper {
   why_selected: string;
   battery_snapshot: BatterySnapshot;
   experimental_conditions: string;
-  performance_summary: string;
-  innovation: string;
-  advantages: string;
-  limitations: string;
+  result_summary: string;
 }
 
 const SAMPLE_PAPERS: SamplePaper[] = [
@@ -41,10 +38,8 @@ const SAMPLE_PAPERS: SamplePaper[] = [
       cell_type: "파우치 풀셀",
     },
     experimental_conditions: "1C, 45도에서 200회 사이클 테스트를 진행했습니다.",
-    performance_summary: "200 사이클 후 용량 유지율 92%를 달성했습니다.",
-    innovation: "새로운 황계 첨가제가 고전압에서 전이금속 용출을 억제합니다.",
-    advantages: "고온 및 고전압 조건에서 사이클 안정성이 크게 향상되었습니다.",
-    limitations: "200 사이클 이후의 장기 거동은 확인되지 않았습니다.",
+    result_summary:
+      "200 사이클 후 용량 유지율 92%를 달성했습니다. 새로운 황계 첨가제가 고전압에서 전이금속 용출을 억제해 고온·고전압 조건에서 사이클 안정성이 크게 향상되었으나, 200 사이클 이후의 장기 거동은 확인되지 않았습니다.",
   },
   {
     title: "High-concentration LiFSI electrolyte enables stable silicon anode cycling",
@@ -64,10 +59,8 @@ const SAMPLE_PAPERS: SamplePaper[] = [
       cell_type: "코인셀 (하프셀)",
     },
     experimental_conditions: "0.5C 정속 충방전, 상온(25도)에서 100회 사이클 진행.",
-    performance_summary: "100 사이클 후 용량 유지율 89%, 쿨롱 효율 99.5% 이상을 기록했습니다.",
-    innovation: "고농도 LiFSI 전해질이 실리콘 표면에 무기물 위주의 얇고 안정적인 SEI를 형성합니다.",
-    advantages: "실리콘 음극의 고질적인 부피 팽창 문제를 전해질 설계만으로 완화했습니다.",
-    limitations: "고농도 LiFSI로 인한 전해질 비용 상승과 점도 증가가 남은 과제입니다.",
+    result_summary:
+      "100 사이클 후 용량 유지율 89%, 쿨롱 효율 99.5% 이상을 기록했습니다. 고농도 LiFSI 전해질이 실리콘 표면에 무기물 위주의 얇고 안정적인 SEI를 형성해 부피 팽창 문제를 전해질 설계만으로 완화했지만, 전해질 비용 상승과 점도 증가가 남은 과제입니다.",
   },
   {
     title: "TEMPO-mediated redox shuttle additive for overcharge protection in NMC cells",
@@ -87,10 +80,8 @@ const SAMPLE_PAPERS: SamplePaper[] = [
       cell_type: "코인셀 (풀셀)",
     },
     experimental_conditions: "1C 사이클링과 함께 과충전(4.8V) 안전성 테스트를 병행했습니다.",
-    performance_summary: "정상 사이클 용량 손실 없이 과충전 상황에서 셀 온도 상승을 억제했습니다.",
-    innovation: "가역적인 레독스 셔틀 메커니즘으로 별도 회로 없이 과충전을 방지합니다.",
-    advantages: "추가 하드웨어 없이 화학적으로 안전성을 확보할 수 있습니다.",
-    limitations: "장기 저장 시 첨가제의 부반응 가능성은 추가 검증이 필요합니다.",
+    result_summary:
+      "정상 사이클 용량 손실 없이 과충전 상황에서 셀 온도 상승을 억제했습니다. 가역적인 레독스 셔틀 메커니즘으로 별도 회로 없이 화학적으로 과충전을 방지할 수 있으나, 장기 저장 시 첨가제의 부반응 가능성은 추가 검증이 필요합니다.",
   },
   {
     title: "LHCE (localized high-concentration electrolyte) for 4.5V lithium metal batteries",
@@ -110,10 +101,8 @@ const SAMPLE_PAPERS: SamplePaper[] = [
       cell_type: "코인셀 (Li metal 풀셀)",
     },
     experimental_conditions: "0.33C 충방전, 리튬 도금/탈리 효율 측정을 병행했습니다.",
-    performance_summary: "150 사이클 후 용량 유지율 85%, 리튬 쿨롱 효율 99.2%를 달성했습니다.",
-    innovation: "국소 고농도 구조의 희석 전해질로 이온전도도와 계면 안정성을 동시에 확보했습니다.",
-    advantages: "고전압 양극과 리튬 금속 음극 양쪽 모두에서 부반응이 억제됩니다.",
-    limitations: "희석제(TTE)의 가격과 대량 생산 공정 검증이 아직 부족합니다.",
+    result_summary:
+      "150 사이클 후 용량 유지율 85%, 리튬 쿨롱 효율 99.2%를 달성했습니다. 국소 고농도 구조의 희석 전해질로 이온전도도와 계면 안정성을 동시에 확보해 고전압 양극과 리튬 금속 음극 양쪽 모두에서 부반응이 억제되지만, 희석제(TTE)의 가격과 대량 생산 공정 검증이 아직 부족합니다.",
   },
   {
     title: "Solid-state sulfide electrolyte interface engineering for all-solid-state batteries",
@@ -133,10 +122,8 @@ const SAMPLE_PAPERS: SamplePaper[] = [
       cell_type: "전고체 코인셀",
     },
     experimental_conditions: "0.1C, 상온에서 50회 사이클, 임피던스 분석을 병행했습니다.",
-    performance_summary: "계면 저항이 약 60% 감소하였고 50사이클 후 용량 유지율 94%를 기록했습니다.",
-    innovation: "산화물 나노코팅으로 황화물 전해질과 양극 사이의 부반응을 억제했습니다.",
-    advantages: "전고체전지의 고질적인 계면 저항 문제를 실질적으로 개선했습니다.",
-    limitations: "코팅 공정의 대면적 균일성 확보가 실용화의 과제로 남아 있습니다.",
+    result_summary:
+      "계면 저항이 약 60% 감소하였고 50사이클 후 용량 유지율 94%를 기록했습니다. 산화물 나노코팅으로 황화물 전해질과 양극 사이의 부반응을 억제해 전고체전지의 고질적인 계면 저항 문제를 실질적으로 개선했지만, 코팅 공정의 대면적 균일성 확보가 실용화의 과제로 남아 있습니다.",
   },
 ];
 
@@ -149,16 +136,40 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export async function mockSearchPapers(keyword: string): Promise<SearchResponse> {
+export async function mockSearchPapers(request: SearchRequest): Promise<SearchResponse> {
   await delay(700);
 
+  const keyword = [request.material, request.performance, request.additive_or_solvent]
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .join(" ");
   const searchId = nextSearchId++;
-  const results: PaperCard[] = SAMPLE_PAPERS.map((sample, i) => {
+  const unranked = SAMPLE_PAPERS.map((sample, i) => ({
+    sample,
+    relevance_score: Math.max(60, 98 - i * 7),
+  }));
+
+  // Same priority rule as the backend: relevance is always considered,
+  // sort_by only picks which of (score, year) wins ties first.
+  const sorted = [...unranked].sort((a, b) => {
+    const primary =
+      request.sort_by === "recency"
+        ? a.sample.year - b.sample.year
+        : a.relevance_score - b.relevance_score;
+    if (primary !== 0) return -primary;
+    const secondary =
+      request.sort_by === "recency"
+        ? a.relevance_score - b.relevance_score
+        : a.sample.year - b.sample.year;
+    return -secondary;
+  });
+
+  const results: PaperCard[] = sorted.map(({ sample, relevance_score }, i) => {
     const resultId = nextResultId++;
     const card: PaperCard = {
       result_id: resultId,
       rank: i + 1,
-      relevance_score: Math.max(60, 98 - i * 7),
+      relevance_score,
       why_selected: sample.why_selected,
       title: sample.title,
       authors: sample.authors,
@@ -170,10 +181,7 @@ export async function mockSearchPapers(keyword: string): Promise<SearchResponse>
     detailStore.set(resultId, {
       ...card,
       experimental_conditions: sample.experimental_conditions,
-      performance_summary: sample.performance_summary,
-      innovation: sample.innovation,
-      advantages: sample.advantages,
-      limitations: sample.limitations,
+      result_summary: sample.result_summary,
       abstract: sample.abstract,
       keyword,
     });
@@ -183,6 +191,12 @@ export async function mockSearchPapers(keyword: string): Promise<SearchResponse>
   const response: SearchResponse = {
     search_id: searchId,
     keyword,
+    material: request.material.trim(),
+    material_notice: "",
+    material_notice_level: null,
+    performance: request.performance.trim(),
+    additive_or_solvent: request.additive_or_solvent.trim(),
+    sort_by: request.sort_by,
     expanded_query: `(${keyword}) AND (lithium battery OR electrolyte OR cathode OR anode)`,
     results,
     ai_degraded: false,
