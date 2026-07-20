@@ -17,6 +17,8 @@ interface SamplePaper {
   battery_snapshot: BatterySnapshot;
   experimental_conditions: string;
   result_summary: string;
+  /** Empty string demos the "원문 접근 불가" state - only some sample papers have one. */
+  open_access_pdf_url: string;
 }
 
 const SAMPLE_PAPERS: SamplePaper[] = [
@@ -26,6 +28,7 @@ const SAMPLE_PAPERS: SamplePaper[] = [
     journal: "Journal of Power Sources",
     year: 2025,
     doi: "10.1016/j.jpowsour.2025.234567",
+    open_access_pdf_url: "https://example.com/sample-papers/sulfur-cei-stabilization.pdf",
     abstract:
       "This study investigates a sulfur-containing electrolyte additive for NCA cathodes to improve cathode-electrolyte interphase (CEI) stability and cycling performance in high-voltage lithium-ion pouch full cells.",
     why_selected:
@@ -47,6 +50,7 @@ const SAMPLE_PAPERS: SamplePaper[] = [
     journal: "Nature Energy",
     year: 2024,
     doi: "10.1038/s41560-024-01543-2",
+    open_access_pdf_url: "",
     abstract:
       "A high-concentration LiFSI-based electrolyte is shown to suppress silicon anode volume expansion side reactions, forming a robust SEI layer that enables stable cycling of high-capacity silicon anodes.",
     why_selected:
@@ -68,6 +72,7 @@ const SAMPLE_PAPERS: SamplePaper[] = [
     journal: "Journal of the Electrochemical Society",
     year: 2023,
     doi: "10.1149/1945-7111/acb123",
+    open_access_pdf_url: "https://example.com/sample-papers/tempo-redox-shuttle.pdf",
     abstract:
       "TEMPO derivatives are evaluated as redox shuttle additives that provide reversible overcharge protection for NMC-based lithium-ion cells without degrading normal cycling performance.",
     why_selected:
@@ -89,6 +94,7 @@ const SAMPLE_PAPERS: SamplePaper[] = [
     journal: "Advanced Energy Materials",
     year: 2024,
     doi: "10.1002/aenm.202400987",
+    open_access_pdf_url: "",
     abstract:
       "A localized high-concentration electrolyte (LHCE) formulation is developed to enable stable cycling of lithium metal anodes against high-voltage cathodes up to 4.5V.",
     why_selected:
@@ -110,6 +116,7 @@ const SAMPLE_PAPERS: SamplePaper[] = [
     journal: "Joule",
     year: 2023,
     doi: "10.1016/j.joule.2023.05.011",
+    open_access_pdf_url: "https://example.com/sample-papers/sulfide-interface-engineering.pdf",
     abstract:
       "This work addresses interfacial resistance between sulfide solid electrolytes and cathode active materials through a novel coating strategy for all-solid-state lithium batteries.",
     why_selected:
@@ -184,6 +191,8 @@ export async function mockSearchPapers(request: SearchRequest): Promise<SearchRe
       result_summary: sample.result_summary,
       abstract: sample.abstract,
       keyword,
+      open_access_pdf_url: sample.open_access_pdf_url,
+      deep_analysis: null,
     });
     return card;
   });
@@ -217,4 +226,27 @@ export async function mockGetPaperDetail(resultId: string): Promise<PaperDetail>
   const found = detailStore.get(Number(resultId));
   if (!found) throw new Error("해당 논문 결과를 찾을 수 없습니다.");
   return found;
+}
+
+export async function mockRunDeepAnalysis(resultId: string): Promise<PaperDetail> {
+  await delay(1500);
+  const found = detailStore.get(Number(resultId));
+  if (!found) throw new Error("해당 논문 결과를 찾을 수 없습니다.");
+  if (!found.open_access_pdf_url) {
+    throw new Error("오픈 액세스 원문 PDF가 없어 심층 분석을 진행할 수 없습니다.");
+  }
+
+  const updated: PaperDetail = {
+    ...found,
+    deep_analysis: {
+      base_electrolyte: found.battery_snapshot.electrolyte,
+      test_electrolyte: "정보 없음",
+      voltage_range: found.battery_snapshot.voltage_window,
+      cell_type_detail: found.battery_snapshot.cell_type,
+      key_findings: `${found.result_summary} (원문 Figure 근거 심층 분석 결과 - 데모용 목데이터입니다.)`,
+      summary: found.result_summary,
+    },
+  };
+  detailStore.set(Number(resultId), updated);
+  return updated;
 }

@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
-import { getPaperDetail } from "../api/client";
+import { getPaperDetail, runDeepAnalysis } from "../api/client";
 import BatterySnapshotView from "../components/BatterySnapshotView";
+import DeepAnalysisView from "../components/DeepAnalysisView";
 import ErrorMessage from "../components/ErrorMessage";
+import InfoMessage from "../components/InfoMessage";
 import Loading from "../components/Loading";
 import RelevanceBadge from "../components/RelevanceBadge";
 import type { PaperDetail } from "../api/types";
@@ -23,6 +25,8 @@ export default function PaperDetailPage() {
   const [paper, setPaper] = useState<PaperDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [deepAnalyzing, setDeepAnalyzing] = useState(false);
+  const [deepAnalysisError, setDeepAnalysisError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!resultId) return;
@@ -33,6 +37,19 @@ export default function PaperDetailPage() {
       .catch((err) => setError(err instanceof Error ? err.message : "논문 정보를 불러오지 못했습니다."))
       .finally(() => setLoading(false));
   }, [resultId]);
+
+  async function handleDeepAnalysis() {
+    if (!resultId) return;
+    setDeepAnalyzing(true);
+    setDeepAnalysisError(null);
+    try {
+      setPaper(await runDeepAnalysis(resultId));
+    } catch (err) {
+      setDeepAnalysisError(err instanceof Error ? err.message : "심층 분석에 실패했습니다.");
+    } finally {
+      setDeepAnalyzing(false);
+    }
+  }
 
   if (loading) return <Loading message="논문 상세 정보를 불러오는 중입니다..." />;
   if (error) return <ErrorMessage message={error} />;
@@ -61,6 +78,35 @@ export default function PaperDetailPage() {
       <section className="detail-section">
         <h3>배터리 정보</h3>
         <BatterySnapshotView snapshot={paper.battery_snapshot} />
+      </section>
+
+      <section className="detail-section deep-analysis-section">
+        <h3>심층 분석 (원문 PDF 기반)</h3>
+        {paper.deep_analysis ? (
+          <DeepAnalysisView analysis={paper.deep_analysis} />
+        ) : paper.open_access_pdf_url ? (
+          <>
+            <p className="deep-analysis-hint">
+              초록만으로는 전해액 조성, 전압 범위 같은 세부 실험 조건을 파악하기 어려운 경우가
+              많습니다. 이 논문은 원문 PDF가 공개되어 있어, 원문을 직접 분석해 더 정확한 실험
+              조건을 확인할 수 있습니다.
+            </p>
+            <button
+              type="button"
+              className="deep-analysis-button"
+              onClick={handleDeepAnalysis}
+              disabled={deepAnalyzing}
+            >
+              {deepAnalyzing ? "분석 중..." : "자세히 분석"}
+            </button>
+            {deepAnalyzing && (
+              <Loading message="원문 PDF를 다운로드하고 분석하는 중입니다... (최대 1~2분 소요)" />
+            )}
+            {deepAnalysisError && <ErrorMessage message={deepAnalysisError} />}
+          </>
+        ) : (
+          <InfoMessage message="원문 접근 불가 - 초록 기반 요약만 제공됩니다." />
+        )}
       </section>
 
       <Section title="실험 조건">{paper.experimental_conditions}</Section>

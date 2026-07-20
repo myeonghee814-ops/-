@@ -309,3 +309,47 @@ def test_extract_battery_analysis_batch_wraps_http_error_as_runtime_error(monkey
         asyncio.run(
             ai_service.extract_battery_analysis_batch([("Paper A", "Abstract A")])
         )
+
+
+# --- extract_deep_analysis ----------------------------------------------------
+
+
+def test_extract_deep_analysis_returns_parsed_result(monkeypatch):
+    payload = {
+        "base_electrolyte": "1M LiPF6 in EC/DMC",
+        "test_electrolyte": "1M LiPF6 in EC/DMC + 2wt% FEC",
+        "voltage_range": "3.0-4.3 V",
+        "cell_type_detail": "coin cell (half-cell), 2032 type",
+        "key_findings": "FEC 첨가 시 용량 유지율이 개선되었습니다.",
+        "summary": "FEC 첨가제의 SEI 안정화 효과를 확인한 연구입니다.",
+    }
+    client = _install_fake_client(monkeypatch, [_ok_response(payload)])
+
+    result = asyncio.run(
+        ai_service.extract_deep_analysis("Paper Title", "Full body text...", ["Figure 1. Cycling."])
+    )
+
+    assert result == payload
+    assert client.post.await_count == 1
+
+
+def test_extract_deep_analysis_truncates_long_body_text(monkeypatch):
+    captured = {}
+
+    async def _fake_generate_json(system_prompt, payload, gemini_api_key=None, *, stage=""):
+        captured["body_text"] = payload["body_text"]
+        return {"base_electrolyte": "정보 없음"}
+
+    monkeypatch.setattr(ai_service, "_generate_json", _fake_generate_json)
+
+    long_text = "x" * (ai_service._DEEP_ANALYSIS_BODY_TEXT_LIMIT + 5000)
+    asyncio.run(ai_service.extract_deep_analysis("Paper Title", long_text, []))
+
+    assert len(captured["body_text"]) == ai_service._DEEP_ANALYSIS_BODY_TEXT_LIMIT + len("...")
+
+
+def test_extract_deep_analysis_wraps_http_error_as_runtime_error(monkeypatch, no_sleep):
+    _install_fake_client(monkeypatch, [_error_response(400, "bad request")])
+
+    with pytest.raises(RuntimeError):
+        asyncio.run(ai_service.extract_deep_analysis("Paper Title", "Full body text...", []))

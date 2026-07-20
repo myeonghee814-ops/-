@@ -29,6 +29,7 @@ class Paper(Base):
     year: Mapped[int | None] = mapped_column(Integer, nullable=True)
     doi: Mapped[str] = mapped_column(String, default="")
     abstract: Mapped[str] = mapped_column(Text, default="")
+    open_access_pdf_url: Mapped[str] = mapped_column(String, default="")
 
     # Battery snapshot
     cathode: Mapped[str] = mapped_column(String, default="")
@@ -37,9 +38,21 @@ class Paper(Base):
     voltage_window: Mapped[str] = mapped_column(String, default="")
     cell_type: Mapped[str] = mapped_column(String, default="")
 
-    # Research analysis
+    # Research analysis (abstract-only, fast path)
     experimental_conditions: Mapped[str] = mapped_column(Text, default="")
     result_summary: Mapped[str] = mapped_column(Text, default="")
+
+    # Deep analysis (on-demand, full-text-PDF path - see pdf_extract.py /
+    # ai_service.extract_deep_analysis). Kept as separate columns from the
+    # abstract-only fields above so a failed/never-requested deep analysis
+    # never clobbers the fast-path result already shown in the results list.
+    deep_base_electrolyte: Mapped[str] = mapped_column(String, default="")
+    deep_test_electrolyte: Mapped[str] = mapped_column(String, default="")
+    deep_voltage_range: Mapped[str] = mapped_column(String, default="")
+    deep_cell_type_detail: Mapped[str] = mapped_column(String, default="")
+    deep_key_findings: Mapped[str] = mapped_column(Text, default="")
+    deep_summary: Mapped[str] = mapped_column(Text, default="")
+    deep_analyzed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     extracted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
@@ -49,6 +62,10 @@ class Paper(Base):
     @property
     def is_extracted(self) -> bool:
         return self.extracted_at is not None
+
+    @property
+    def is_deep_analyzed(self) -> bool:
+        return self.deep_analyzed_at is not None
 
 
 class SearchQuery(Base):

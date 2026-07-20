@@ -19,11 +19,22 @@ export interface PaperCard {
   battery_snapshot: BatterySnapshot;
 }
 
+export interface DeepAnalysis {
+  base_electrolyte: string;
+  test_electrolyte: string;
+  voltage_range: string;
+  cell_type_detail: string;
+  key_findings: string;
+  summary: string;
+}
+
 export interface PaperDetail extends PaperCard {
   experimental_conditions: string;
   result_summary: string;
   abstract: string;
   keyword: string;
+  open_access_pdf_url: string;
+  deep_analysis: DeepAnalysis | null;
 }
 
 export type SortBy = "relevance" | "recency";

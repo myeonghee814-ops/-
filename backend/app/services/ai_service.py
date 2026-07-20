@@ -57,10 +57,20 @@ Expand/translate the keyword into an effective academic search-engine query \
 using standard English battery/electrochemistry terminology and relevant \
 synonyms (e.g. an additive abbreviation should be paired with its full \
 chemical name; a Korean material name should be translated to its standard \
-English term). Combine multiple concepts with AND/OR as appropriate.
+English term).
+
+IMPORTANT - the target search engine's query field is a PLAIN KEYWORD/PHRASE \
+list, not a boolean query language: it does NOT understand quotes, \
+parentheses, or the words AND/OR as operators - it matches them as literal \
+text, which makes the whole query match nothing. Never wrap terms in quotes, \
+never use parentheses, and never join concepts with the words AND/OR. \
+Instead, just place every relevant keyword/synonym/phrase next to the \
+others separated by plain spaces, exactly like typing into a simple search \
+box (e.g. "high-nickel cathode NCM NMC cycling stability", not \
+'("high-nickel cathode" OR NCM OR NMC) AND "cycling stability"').
 
 Respond ONLY with JSON of this exact shape:
-{"english_query": "<search query string>", "expanded_terms": ["<term1>", "<term2>", ...]}
+{"english_query": "<plain space-separated search query string, no quotes/parentheses/AND/OR>", "expanded_terms": ["<term1>", "<term2>", ...]}
 """
 
 RANKING_SYSTEM_PROMPT = """\
@@ -152,6 +162,43 @@ covering every index:
 이 연구의 새로운 점, 강점, 한계를 하나로 종합한 요약>"
   }, ...
 ]}
+"""
+
+
+EXTRACTION_DEEP_SYSTEM_PROMPT = """\
+You are a senior battery researcher extracting detailed experimental \
+information from the full body text of a paper (not just its abstract) for \
+a Korean colleague. The abstract alone rarely states exact electrolyte \
+compositions or voltage windows - that detail lives in the Methods/\
+Experimental section of the full text, which you have here. Be precise and \
+concise. If a field is not discernible from the text, use "정보 없음" - \
+never invent data.
+
+Distinguish the BASE (control/baseline) electrolyte from the TEST \
+(experimental/comparison) electrolyte where the paper studies an additive or \
+a modified formulation against a baseline - if the paper only uses one \
+electrolyte system throughout, put it in base_electrolyte and use "정보 없음" \
+for test_electrolyte.
+
+Material/chemistry fields (electrolyte compositions, cell type) should use \
+standard scientific notation/formulas (e.g. 1M LiPF6 in EC/DMC, NCM811, Li \
+metal) exactly as commonly written even in Korean papers - do not force-\
+translate chemical names. All other fields must be written in natural \
+Korean.
+
+A list of candidate figure/table caption lines detected in the text is \
+provided as a hint for key_findings - use it if relevant, but the body text \
+itself is the source of truth.
+
+Respond ONLY with JSON of this exact shape:
+{
+  "base_electrolyte": "<베이스(기준) 전해액 조성, 또는 '정보 없음'>",
+  "test_electrolyte": "<실험(비교) 전해액 조성, 또는 '정보 없음'>",
+  "voltage_range": "<사이클링에 사용된 전압 범위, 예: '3.0-4.3 V', 또는 '정보 없음'>",
+  "cell_type_detail": "<전지 형태 상세, 예: 'coin cell (half-cell), 2032 type', 또는 '정보 없음'>",
+  "key_findings": "<Figure/Table에 근거한 핵심 정량 결과 (한국어, 2-4문장)>",
+  "summary": "<이 논문의 새로운 점, 강점, 한계를 종합한 요약 (한국어, 2-4문장)>"
+}
 """
 
 
@@ -304,6 +351,14 @@ def _truncate(text: str, limit: int = 1000) -> str:
     return text if len(text) <= limit else text[:limit] + "..."
 
 
+# The Methods/Experimental and Results sections that matter for deep
+# analysis are almost always well within a paper's first ~20k characters
+# (~5k tokens) - truncating there keeps the call fast and cheap without
+# losing the detail this stage exists to recover, and avoids a huge full-text
+# paper blowing past the per-call time budget.
+_DEEP_ANALYSIS_BODY_TEXT_LIMIT = 20_000
+
+
 async def expand_search_query(
     keyword: str, gemini_api_key: str | None = None
 ) -> tuple[str, list[str]]:
@@ -422,3 +477,30 @@ async def extract_battery_analysis_batch(
             continue
         results[idx] = entry
     return results
+
+
+async def extract_deep_analysis(
+    title: str,
+    body_text: str,
+    candidate_figure_captions: list[str],
+    gemini_api_key: str | None = None,
+) -> dict:
+    """On-demand, full-text-PDF version of extract_battery_analysis: recovers
+    experiment-level detail (exact electrolyte compositions, voltage window,
+    cell type) that an abstract alone usually can't. Only called when the
+    user explicitly requests it for one paper that has an open-access PDF -
+    never as part of the regular search results list."""
+
+    payload = {
+        "title": title,
+        "body_text": _truncate(body_text, _DEEP_ANALYSIS_BODY_TEXT_LIMIT),
+        "candidate_figure_captions": candidate_figure_captions,
+    }
+
+    try:
+        return await _generate_json(
+            EXTRACTION_DEEP_SYSTEM_PROMPT, payload, gemini_api_key, stage="deep analysis"
+        )
+    except (httpx.HTTPError, json.JSONDecodeError, KeyError, IndexError) as exc:
+        _log_gemini_failure("deep analysis", exc)
+        raise RuntimeError(f"AI 심층 분석에 실패했습니다: {exc}") from exc

@@ -16,14 +16,17 @@ of just re-sorting a top-10.
 """
 
 import asyncio
+import logging
 from dataclasses import dataclass
 
 import httpx
 
 from app.core.config import settings
 
+logger = logging.getLogger(__name__)
+
 SEARCH_URL = "https://api.semanticscholar.org/graph/v1/paper/search"
-FIELDS = "title,abstract,venue,year,authors,externalIds"
+FIELDS = "title,abstract,venue,year,authors,externalIds,openAccessPdf"
 
 # Without an API key, requests share Semantic Scholar's public rate-limit
 # pool and get 429s whenever other users are also querying it - unlike
@@ -55,12 +58,25 @@ class Candidate:
     year: int | None
     doi: str
     abstract: str
+    open_access_pdf_url: str = ""
 
 
 def _extract_doi(external_ids: dict | None) -> str:
     if not external_ids:
         return ""
     return external_ids.get("DOI") or ""
+
+
+def _extract_open_access_pdf_url(open_access_pdf: dict | None) -> str:
+    """Semantic Scholar returns an `openAccessPdf` object for nearly every
+    paper, but most of the time its `url` is an empty string - a
+    "not actually downloadable, go check Unpaywall yourself" placeholder,
+    not a real PDF link. Only a non-empty url means a PDF can actually be
+    fetched on demand."""
+
+    if not open_access_pdf:
+        return ""
+    return open_access_pdf.get("url") or ""
 
 
 async def search_candidates(query: str, max_results: int | None = None) -> list[Candidate]:
@@ -79,12 +95,28 @@ async def search_candidates(query: str, max_results: int | None = None) -> list[
         while True:
             resp = await client.get(SEARCH_URL, params=params, headers=headers, timeout=30)
             if resp.status_code == 429 and attempt < _MAX_RETRIES:
-                await asyncio.sleep(_retry_delay_seconds(resp, attempt))
+                delay = _retry_delay_seconds(resp, attempt)
+                logger.warning(
+                    "Semantic Scholar search: HTTP 429 (attempt %d/%d) for query=%r, retrying in %.1fs",
+                    attempt + 1,
+                    _MAX_RETRIES + 1,
+                    query,
+                    delay,
+                )
+                await asyncio.sleep(delay)
                 attempt += 1
                 continue
             resp.raise_for_status()
             data = resp.json()
             break
+
+    logger.info(
+        "Semantic Scholar search: query=%r status=%s total=%s results=%d",
+        query,
+        resp.status_code,
+        data.get("total"),
+        len(data.get("data", [])),
+    )
 
     candidates: list[Candidate] = []
     for item in data.get("data", []):
@@ -101,6 +133,7 @@ async def search_candidates(query: str, max_results: int | None = None) -> list[
                 year=item.get("year"),
                 doi=_extract_doi(item.get("externalIds")),
                 abstract=(item.get("abstract") or "").strip(),
+                open_access_pdf_url=_extract_open_access_pdf_url(item.get("openAccessPdf")),
             )
         )
     return candidates

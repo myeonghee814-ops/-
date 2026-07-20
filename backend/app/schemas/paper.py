@@ -26,6 +26,18 @@ class PaperCard(BaseModel):
     battery_snapshot: BatterySnapshot
 
 
+class DeepAnalysis(BaseModel):
+    """On-demand, full-text-PDF analysis - see ai_service.extract_deep_analysis.
+    Present only once the user has clicked "자세히 분석" and it succeeded."""
+
+    base_electrolyte: str
+    test_electrolyte: str
+    voltage_range: str
+    cell_type_detail: str
+    key_findings: str
+    summary: str
+
+
 class PaperDetail(PaperCard):
     """Shape for the paper detail page: everything from PaperCard plus
     the full research analysis and abstract."""
@@ -34,3 +46,5 @@ class PaperDetail(PaperCard):
     result_summary: str
     abstract: str
     keyword: str
+    open_access_pdf_url: str
+    deep_analysis: DeepAnalysis | None

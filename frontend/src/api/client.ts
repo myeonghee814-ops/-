@@ -1,5 +1,5 @@
 import type { PaperDetail, SearchRequest, SearchResponse } from "./types";
-import { mockGetPaperDetail, mockGetSearch, mockSearchPapers } from "./mockData";
+import { mockGetPaperDetail, mockGetSearch, mockRunDeepAnalysis, mockSearchPapers } from "./mockData";
 import { getApiKey } from "../lib/apiKey";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
@@ -43,5 +43,16 @@ export async function getPaperDetail(resultId: string): Promise<PaperDetail> {
   if (MOCK_API) return mockGetPaperDetail(resultId);
 
   const res = await fetch(`${API_BASE_URL}/api/results/${resultId}`);
+  return handleResponse<PaperDetail>(res);
+}
+
+export async function runDeepAnalysis(resultId: string): Promise<PaperDetail> {
+  if (MOCK_API) return mockRunDeepAnalysis(resultId);
+
+  const apiKey = getApiKey();
+  const res = await fetch(`${API_BASE_URL}/api/results/${resultId}/deep-analysis`, {
+    method: "POST",
+    headers: apiKey ? { "X-Gemini-Api-Key": apiKey } : {},
+  });
   return handleResponse<PaperDetail>(res);
 }

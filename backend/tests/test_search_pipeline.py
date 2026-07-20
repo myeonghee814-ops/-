@@ -18,7 +18,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.db.database import Base
-from app.services import search_pipeline, semantic_scholar_service
+from app.services import pdf_extract, search_pipeline, semantic_scholar_service
 
 _HANGUL_RE = re.compile(r"[가-힣]+")
 
@@ -171,6 +171,49 @@ def test_run_search_strips_unmapped_hangul_from_the_semantic_scholar_query(monke
     # The display query still keeps the unmapped Korean word - only the
     # outgoing API string was cleaned, not the user-facing one.
     assert "고전압" in search_query.expanded_query
+
+
+def test_run_search_strips_boolean_query_syntax_from_gemini_expansion(monkeypatch, db):
+    """Regression test: Semantic Scholar's plain relevance-search endpoint
+    (what search_candidates() calls) has no boolean query syntax - Gemini's
+    query expansion used to be free to produce '("term1" OR "term2") AND
+    "term3"'-style output for synonym grouping, which the endpoint then
+    matches as literal quote/paren/AND/OR text instead of an actual boolean
+    query, returning zero candidates even though every individual term would
+    have matched plenty on its own. This was the real cause of at least one
+    previously-unexplained "no results" search."""
+
+    async def _fake_expand_boolean_syntax(keyword, gemini_api_key=None):
+        return (
+            '("NCM613" OR "NCM 613" OR "NMC613") AND ("high voltage" OR "고전압")',
+            ["NCM613", "high voltage"],
+        )
+
+    captured_queries = []
+
+    async def _fake_search(query, max_results=None):
+        captured_queries.append(query)
+        return [_candidate()]
+
+    monkeypatch.setattr(search_pipeline.semantic_scholar_service, "search_candidates", _fake_search)
+    _patch_ai_defaults(monkeypatch, expand=_fake_expand_boolean_syntax, batch=_fake_extract_batch_ok)
+
+    search_query, ai_degraded = asyncio.run(search_pipeline.run_search(db, "NCM613 고전압"))
+
+    assert ai_degraded is False
+    assert len(captured_queries) == 1
+    api_query = captured_queries[0]
+    assert '"' not in api_query and "'" not in api_query
+    assert "(" not in api_query and ")" not in api_query
+    assert not re.search(r"\b(?:AND|OR)\b", api_query, re.IGNORECASE)
+    assert not _HANGUL_RE.search(api_query)
+    assert "NCM613" in api_query
+    assert "NMC613" in api_query
+    assert "high voltage" in api_query
+    # Display query is untouched - only the outgoing API string was cleaned.
+    assert search_query.expanded_query == (
+        '("NCM613" OR "NCM 613" OR "NMC613") AND ("high voltage" OR "고전압")'
+    )
 
 
 def test_run_search_falls_back_to_original_order_when_reranking_fails(monkeypatch, db):
@@ -424,3 +467,87 @@ def test_run_search_sort_by_is_ignored_when_reranking_fails(monkeypatch, db):
 
     assert ai_degraded is True
     assert [r.paper.title for r in search_query.results] == ["First", "Second"]
+
+
+# --- run_deep_analysis --------------------------------------------------------
+
+
+def test_run_deep_analysis_downloads_pdf_and_stores_result(monkeypatch, db):
+    candidate = _candidate("p1", "Paper")
+    paper = search_pipeline._get_or_create_paper(db, candidate)
+    paper.open_access_pdf_url = "https://example.com/paper.pdf"
+    db.commit()
+
+    async def _fake_download_and_extract(url):
+        assert url == "https://example.com/paper.pdf"
+        return pdf_extract.ExtractedPaper(
+            body_text="Full body text with methods and results.",
+            candidate_figure_captions=["Figure 1. Cycling performance."],
+        )
+
+    async def _fake_extract_deep_analysis(title, body_text, captions, gemini_api_key=None):
+        assert title == "Paper"
+        assert body_text == "Full body text with methods and results."
+        assert captions == ["Figure 1. Cycling performance."]
+        return {
+            "base_electrolyte": "1M LiPF6 in EC/DMC",
+            "test_electrolyte": "1M LiPF6 in EC/DMC + 2wt% FEC",
+            "voltage_range": "3.0-4.3 V",
+            "cell_type_detail": "coin cell (half-cell)",
+            "key_findings": "FEC 첨가 시 용량 유지율이 개선되었습니다.",
+            "summary": "FEC의 SEI 안정화 효과를 확인한 연구입니다.",
+        }
+
+    monkeypatch.setattr(pdf_extract, "download_and_extract", _fake_download_and_extract)
+    monkeypatch.setattr(search_pipeline.ai_service, "extract_deep_analysis", _fake_extract_deep_analysis)
+
+    result = asyncio.run(search_pipeline.run_deep_analysis(db, paper))
+
+    assert result.is_deep_analyzed is True
+    assert result.deep_base_electrolyte == "1M LiPF6 in EC/DMC"
+    assert result.deep_test_electrolyte == "1M LiPF6 in EC/DMC + 2wt% FEC"
+    assert result.deep_voltage_range == "3.0-4.3 V"
+    assert result.deep_cell_type_detail == "coin cell (half-cell)"
+    assert result.deep_key_findings == "FEC 첨가 시 용량 유지율이 개선되었습니다."
+    assert result.deep_summary == "FEC의 SEI 안정화 효과를 확인한 연구입니다."
+    assert result.deep_analyzed_at is not None
+
+
+def test_run_deep_analysis_propagates_pdf_extraction_failure(monkeypatch, db):
+    candidate = _candidate("p1", "Paper")
+    paper = search_pipeline._get_or_create_paper(db, candidate)
+    paper.open_access_pdf_url = "https://example.com/paper.pdf"
+    db.commit()
+
+    async def _fake_download_fails(url):
+        raise pdf_extract.PdfExtractionError("PDF를 다운로드할 수 없습니다: connection reset")
+
+    monkeypatch.setattr(pdf_extract, "download_and_extract", _fake_download_fails)
+
+    with pytest.raises(pdf_extract.PdfExtractionError):
+        asyncio.run(search_pipeline.run_deep_analysis(db, paper))
+
+    assert paper.is_deep_analyzed is False
+
+
+def test_run_deep_analysis_propagates_gemini_failure(monkeypatch, db):
+    candidate = _candidate("p1", "Paper")
+    paper = search_pipeline._get_or_create_paper(db, candidate)
+    paper.open_access_pdf_url = "https://example.com/paper.pdf"
+    db.commit()
+
+    async def _fake_download_and_extract(url):
+        return pdf_extract.ExtractedPaper(body_text="Full text", candidate_figure_captions=[])
+
+    async def _fake_extract_deep_analysis_fails(title, body_text, captions, gemini_api_key=None):
+        raise RuntimeError("AI 심층 분석에 실패했습니다: 503")
+
+    monkeypatch.setattr(pdf_extract, "download_and_extract", _fake_download_and_extract)
+    monkeypatch.setattr(
+        search_pipeline.ai_service, "extract_deep_analysis", _fake_extract_deep_analysis_fails
+    )
+
+    with pytest.raises(RuntimeError):
+        asyncio.run(search_pipeline.run_deep_analysis(db, paper))
+
+    assert paper.is_deep_analyzed is False

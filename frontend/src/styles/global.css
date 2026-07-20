@@ -476,6 +476,41 @@ body {
   margin-top: 1.5rem;
 }
 
+.deep-analysis-hint {
+  color: var(--color-text-dim);
+  font-size: 0.9rem;
+  margin: 0 0 0.85rem;
+  line-height: 1.5;
+}
+
+.deep-analysis-button {
+  padding: 0.6rem 1.25rem;
+  border-radius: 8px;
+  border: none;
+  background: var(--color-accent);
+  color: white;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.deep-analysis-button:hover:not(:disabled) {
+  background: var(--color-accent-hover);
+}
+
+.deep-analysis-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.deep-analysis-results {
+  margin-top: 0.5rem;
+}
+
+.deep-analysis-text {
+  margin: 0.85rem 0 0;
+  line-height: 1.6;
+}
+
 .detail-metadata-list {
   list-style: none;
   padding: 0;

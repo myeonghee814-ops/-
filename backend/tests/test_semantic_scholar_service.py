@@ -129,3 +129,50 @@ def test_search_candidates_non_retryable_error_raises_immediately(monkeypatch, n
 
     assert client.get.await_count == 1
     assert no_sleep == []
+
+
+# --- openAccessPdf -----------------------------------------------------------
+
+
+def test_search_candidates_extracts_real_open_access_pdf_url(monkeypatch, no_sleep):
+    papers = [
+        {
+            "paperId": "1",
+            "title": "Paper",
+            "openAccessPdf": {"url": "https://example.com/paper.pdf", "status": "GREEN"},
+        }
+    ]
+    _install_fake_client(monkeypatch, [_ok_response(papers)])
+
+    result = asyncio.run(semantic_scholar_service.search_candidates("silicon anode"))
+
+    assert result[0].open_access_pdf_url == "https://example.com/paper.pdf"
+
+
+def test_search_candidates_treats_empty_url_placeholder_as_no_pdf(monkeypatch, no_sleep):
+    """Semantic Scholar returns an `openAccessPdf` object for nearly every
+    paper, but most of the time its `url` is an empty-string placeholder
+    (see disclaimer text pointing at Unpaywall) rather than an actual
+    downloadable PDF - that must not be treated as a real PDF link."""
+
+    papers = [
+        {
+            "paperId": "1",
+            "title": "Paper",
+            "openAccessPdf": {"url": "", "status": None, "disclaimer": "Notice: ..."},
+        }
+    ]
+    _install_fake_client(monkeypatch, [_ok_response(papers)])
+
+    result = asyncio.run(semantic_scholar_service.search_candidates("silicon anode"))
+
+    assert result[0].open_access_pdf_url == ""
+
+
+def test_search_candidates_handles_missing_open_access_pdf_field(monkeypatch, no_sleep):
+    papers = [{"paperId": "1", "title": "Paper"}]
+    _install_fake_client(monkeypatch, [_ok_response(papers)])
+
+    result = asyncio.run(semantic_scholar_service.search_candidates("silicon anode"))
+
+    assert result[0].open_access_pdf_url == ""

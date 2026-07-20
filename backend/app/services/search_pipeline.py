@@ -42,7 +42,13 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.db.models import Paper, SearchQuery, SearchResult
-from app.services import ai_service, battery_term_mapping, local_reranker, semantic_scholar_service
+from app.services import (
+    ai_service,
+    battery_term_mapping,
+    local_reranker,
+    pdf_extract,
+    semantic_scholar_service,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -70,15 +76,34 @@ _OVERLAP_WORD_RE = re.compile(r"[A-Za-z][A-Za-z0-9\-]{2,}")
 # term) instead of just failing to match on those specific words alone.
 _HANGUL_RE = re.compile(r"[가-힣]+")
 
+# semantic_scholar_service.search_candidates calls the plain relevance-search
+# endpoint (/graph/v1/paper/search), which - per Semantic Scholar's own docs -
+# has no boolean query syntax: only the separate /paper/search/bulk endpoint
+# supports quotes/parentheses/operators, and even there OR is the `|`
+# character, never the literal word "OR". QUERY_EXPANSION_SYSTEM_PROMPT now
+# tells Gemini not to produce '("term1" OR "term2") AND "term3"'-style output,
+# but this strips it anyway as a second, independent safety net - sent
+# verbatim to the relevance endpoint, those quote/paren/AND/OR characters are
+# literal text that essentially never appears in a real paper's title or
+# abstract, so the whole query matches nothing (0 candidates) even though
+# every individual term inside it would have matched plenty on its own. This
+# was the root cause behind at least one previously-unexplained "no results"
+# search (a keyword combination Gemini happened to expand into this form).
+_BOOLEAN_SYNTAX_RE = re.compile(r"[\"'“”()]|\b(?:AND|OR)\b", re.IGNORECASE)
+
 
 def _api_search_query(english_query: str) -> str:
     """Derive the string actually sent to Semantic Scholar from the
-    (possibly Hangul-containing) display query, by stripping any leftover
-    Hangul. Never returns an empty string - falls back to the untouched
-    query if stripping would remove everything (e.g. an all-Korean keyword
-    with no TERM_MAP hits at all), since a degraded search beats none."""
+    (possibly Hangul-containing, possibly boolean-syntax-containing) display
+    query: strips leftover Hangul (see battery_term_mapping above) and any
+    quote/parenthesis/AND/OR boolean syntax the relevance-search endpoint
+    doesn't understand, leaving a plain space-separated keyword list. Never
+    returns an empty string - falls back to the untouched query if stripping
+    would remove everything, since a degraded search beats none."""
 
-    stripped = " ".join(_HANGUL_RE.sub(" ", english_query).split())
+    stripped = _HANGUL_RE.sub(" ", english_query)
+    stripped = _BOOLEAN_SYNTAX_RE.sub(" ", stripped)
+    stripped = " ".join(stripped.split())
     return stripped or english_query
 
 
@@ -156,9 +181,15 @@ def _get_or_create_paper(db: Session, candidate: semantic_scholar_service.Candid
             year=candidate.year,
             doi=candidate.doi,
             abstract=candidate.abstract,
+            open_access_pdf_url=candidate.open_access_pdf_url,
         )
         db.add(paper)
         db.flush()
+    else:
+        # Bibliographic (not AI-derived) field - safe and cheap to refresh
+        # from Semantic Scholar every time this paper resurfaces, unlike
+        # cathode/anode/etc. which require a Gemini call to redo.
+        paper.open_access_pdf_url = candidate.open_access_pdf_url
     return paper
 
 
@@ -331,6 +362,7 @@ async def run_search(
             ai_degraded = True
 
     api_query = _api_search_query(english_query)
+    logger.info("Semantic Scholar API query (from display query %r): %r", english_query, api_query)
     candidates = await semantic_scholar_service.search_candidates(api_query)
     if not candidates:
         raise ValueError(f"'{keyword}'에 대한 논문을 찾을 수 없습니다.")
@@ -410,3 +442,37 @@ async def run_search(
     db.commit()
     db.refresh(search_query)
     return search_query, ai_degraded
+
+
+async def run_deep_analysis(db: Session, paper: Paper, gemini_api_key: str | None = None) -> Paper:
+    """On-demand full-text-PDF analysis for one paper, triggered only by an
+    explicit user action (never as part of the regular search). Assumes the
+    caller has already checked `paper.open_access_pdf_url` is non-empty and
+    `paper.is_deep_analyzed` is False - unlike the rest of the pipeline this
+    has no graceful-degradation fallback: a failure here is surfaced to the
+    caller directly instead of silently downgrading, since it's a single
+    explicit request rather than a best-effort background stage.
+
+    Downloads the paper's open-access PDF, extracts its full text (see
+    pdf_extract.py), and asks Gemini for experiment-level detail an abstract
+    alone usually can't give (exact electrolyte compositions, voltage
+    window, cell type). Result is cached on the Paper row (keyed by
+    external_paper_id, same as extract_battery_analysis) so revisiting the
+    same paper from a later search never re-downloads or re-analyzes it.
+    """
+
+    extracted = await pdf_extract.download_and_extract(paper.open_access_pdf_url)
+    analysis = await ai_service.extract_deep_analysis(
+        paper.title, extracted.body_text, extracted.candidate_figure_captions, gemini_api_key
+    )
+
+    paper.deep_base_electrolyte = analysis.get("base_electrolyte", "정보 없음")
+    paper.deep_test_electrolyte = analysis.get("test_electrolyte", "정보 없음")
+    paper.deep_voltage_range = analysis.get("voltage_range", "정보 없음")
+    paper.deep_cell_type_detail = analysis.get("cell_type_detail", "정보 없음")
+    paper.deep_key_findings = analysis.get("key_findings", "")
+    paper.deep_summary = analysis.get("summary", "")
+    paper.deep_analyzed_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(paper)
+    return paper
