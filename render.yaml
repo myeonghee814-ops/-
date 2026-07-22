@@ -1,0 +1,59 @@
+# Render Blueprint - defines both services this repo needs (FastAPI backend
+# + Gemini Node proxy) so they can be created together in one step: Render
+# dashboard > New > Blueprint > point at this repo/branch > Apply.
+#
+# Written from Render's documented Blueprint spec (docs.render.com/blueprint-spec)
+# rather than verified against a live account - if Render's parser rejects a
+# field, check that page and adjust the couple of lines in question; nothing
+# else here should need to change.
+#
+# Free-tier tradeoffs to know about before deploying (see backend/README or
+# ask - not repeated in full here): both services spin down after 15 min
+# idle (30-60s cold start on the next request), and the filesystem is
+# ephemeral - blip.db (SQLite) resets on every redeploy/restart/spin-down.
+# Accepted for this deployment; not a bug.
+services:
+  - type: web
+    name: blip-backend
+    runtime: python
+    plan: free
+    branch: claude/blip-battery-literature-vjf3um
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-3.5-flash
+      - key: SEMANTIC_SCHOLAR_API_KEY
+        sync: false
+      # Public deployment - never fall back to the server's own key above.
+      - key: REQUIRE_CALLER_API_KEY
+        value: "true"
+      - key: DATABASE_URL
+        value: sqlite:///./blip.db
+      - key: CANDIDATE_COUNT
+        value: "8"
+      - key: TOP_N_RESULTS
+        value: "10"
+      # "null" is the Origin a locally-opened file:// dist/index.html sends -
+      # already allowed unconditionally in app/main.py's CORS config
+      # alongside this value, so the frontend staying local needs no change
+      # here. Only relevant if the frontend itself is ever hosted elsewhere.
+      - key: FRONTEND_ORIGIN
+        value: http://localhost:5173
+
+  - type: web
+    name: blip-gemini-proxy
+    runtime: node
+    plan: free
+    branch: claude/blip-battery-literature-vjf3um
+    rootDir: proxy-server
+    buildCommand: npm install
+    startCommand: node index.mjs
+    envVars:
+      - key: HOST
+        value: 0.0.0.0

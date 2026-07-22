@@ -4,6 +4,7 @@ import { HashRouter } from "react-router-dom";
 
 import App from "./App";
 import "./styles/global.css";
+import "./styles/summarizer-theme.css";
 
 // HashRouter (not BrowserRouter): the app is loaded via file:// once
 // packaged (Electron) or previewed by double-clicking index.html, where

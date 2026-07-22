@@ -133,6 +133,43 @@ def test_retry_delay_defaults_to_minimum_when_no_info():
     assert ai_service._retry_delay_seconds(resp) == ai_service._MIN_RETRY_DELAY_SECONDS
 
 
+# --- require_caller_api_key ---------------------------------------------------
+
+
+def test_generate_json_requires_caller_key_when_flag_set(monkeypatch, no_sleep):
+    monkeypatch.setattr(ai_service.settings, "require_caller_api_key", True)
+    client = _install_fake_client(monkeypatch, [])
+
+    with pytest.raises(RuntimeError, match="개인 Gemini API 키가 필요"):
+        asyncio.run(ai_service._generate_json("system", {"keyword": "x"}, gemini_api_key=None))
+
+    # Fails before ever making the HTTP call - no quota spent on a request
+    # that was always going to be rejected.
+    assert client.post.await_count == 0
+
+
+def test_generate_json_allows_caller_key_when_flag_set(monkeypatch, no_sleep):
+    monkeypatch.setattr(ai_service.settings, "require_caller_api_key", True)
+    client = _install_fake_client(monkeypatch, [_ok_response({"ok": True})])
+
+    result = asyncio.run(ai_service._generate_json("system", {"keyword": "x"}, gemini_api_key="caller-key"))
+
+    assert result == {"ok": True}
+    assert client.post.await_count == 1
+
+
+def test_generate_json_flag_unset_still_falls_back_to_server_key(monkeypatch, no_sleep):
+    """Regression: the default (flag False) must keep working exactly as
+    before - local dev relies on this fallback."""
+
+    client = _install_fake_client(monkeypatch, [_ok_response({"ok": True})])
+
+    result = asyncio.run(ai_service._generate_json("system", {"keyword": "x"}, gemini_api_key=None))
+
+    assert result == {"ok": True}
+    assert client.post.await_count == 1
+
+
 # --- _generate_json retry/backoff behavior -----------------------------------
 
 
@@ -261,54 +298,113 @@ def test_generate_json_tolerates_trailing_text_end_to_end(monkeypatch, no_sleep)
     assert client.post.await_count == 2
 
 
-# --- extract_battery_analysis_batch ------------------------------------------
+# --- expand_search_query --------------------------------------------------------
 
 
-def test_extract_battery_analysis_batch_empty_input_skips_the_call(monkeypatch):
+def _sent_payload(client) -> dict:
+    """Decodes the JSON payload actually sent to Gemini from the last
+    `client.post(...)` call - it's embedded as `contents[0].parts[0].text`
+    (see `_generate_json`), not a top-level request field."""
+
+    body = client.post.call_args.kwargs["json"]
+    return json.loads(body["contents"][0]["parts"][0]["text"])
+
+
+def test_expand_search_query_omits_focus_hint_when_not_given(monkeypatch):
+    client = _install_fake_client(
+        monkeypatch, [_ok_response({"english_query": "FEC electrolyte additive", "expanded_terms": ["FEC"]})]
+    )
+
+    asyncio.run(ai_service.expand_search_query("FEC"))
+
+    sent = _sent_payload(client)
+    assert sent == {"keyword": "FEC"}
+
+
+def test_expand_search_query_includes_focus_hint_when_given(monkeypatch):
+    client = _install_fake_client(
+        monkeypatch, [_ok_response({"english_query": "FEC electrolyte additive", "expanded_terms": ["FEC"]})]
+    )
+
+    asyncio.run(ai_service.expand_search_query("FEC", focus_hint="전해액 첨가제 위주로 확장"))
+
+    sent = _sent_payload(client)
+    assert sent == {"keyword": "FEC", "focus_hint": "전해액 첨가제 위주로 확장"}
+
+
+def test_expand_search_query_falls_back_to_keyword_when_english_query_missing(monkeypatch):
+    _install_fake_client(monkeypatch, [_ok_response({"expanded_terms": []})])
+
+    english_query, expanded_terms = asyncio.run(ai_service.expand_search_query("FEC"))
+
+    assert english_query == "FEC"
+    assert expanded_terms == []
+
+
+# --- rerank_and_extract_candidates --------------------------------------------
+
+
+def _candidate(paper_id="p1", title="A Paper"):
+    from app.services.semantic_scholar_service import Candidate
+
+    return Candidate(
+        paper_id=paper_id,
+        title=title,
+        authors="Author A",
+        journal="Journal X",
+        year=2024,
+        doi="10.1/x",
+        abstract="An abstract.",
+    )
+
+
+def test_rerank_and_extract_candidates_empty_input_skips_the_call(monkeypatch):
     client = _install_fake_client(monkeypatch, [])
 
-    result = asyncio.run(ai_service.extract_battery_analysis_batch([]))
+    result = asyncio.run(ai_service.rerank_and_extract_candidates("keyword", []))
 
-    assert result == {}
+    assert result == []
     assert client.post.await_count == 0
 
 
-def test_extract_battery_analysis_batch_returns_indexed_dict(monkeypatch):
+def test_rerank_and_extract_candidates_returns_sorted_tuples_with_battery_info(monkeypatch):
     payload = {
-        "analyses": [
-            {"index": 0, "cathode": "NCA"},
-            {"index": 1, "cathode": "LFP"},
+        "rankings": [
+            {"index": 0, "relevance_score": 40.0, "why_selected": "관련성 낮음", "cathode": "LFP"},
+            {"index": 1, "relevance_score": 90.0, "why_selected": "관련성 높음", "cathode": "NCA"},
+        ]
+    }
+    _install_fake_client(monkeypatch, [_ok_response(payload)])
+    candidates = [_candidate("p1", "First"), _candidate("p2", "Second")]
+
+    result = asyncio.run(ai_service.rerank_and_extract_candidates("keyword", candidates))
+
+    assert [c.title for c, _, _, _ in result] == ["Second", "First"]
+    assert result[0][1] == 90.0
+    assert result[0][2] == "관련성 높음"
+    assert result[0][3]["cathode"] == "NCA"
+
+
+def test_rerank_and_extract_candidates_ignores_out_of_range_index(monkeypatch):
+    payload = {
+        "rankings": [
+            {"index": 0, "relevance_score": 50.0, "why_selected": "", "cathode": "NCA"},
+            {"index": 5, "relevance_score": 50.0, "why_selected": "", "cathode": "LFP"},
         ]
     }
     _install_fake_client(monkeypatch, [_ok_response(payload)])
 
-    result = asyncio.run(
-        ai_service.extract_battery_analysis_batch(
-            [("Paper A", "Abstract A"), ("Paper B", "Abstract B")]
-        )
-    )
+    result = asyncio.run(ai_service.rerank_and_extract_candidates("keyword", [_candidate()]))
 
-    assert result == {0: {"index": 0, "cathode": "NCA"}, 1: {"index": 1, "cathode": "LFP"}}
+    assert len(result) == 1
+    assert result[0][3]["cathode"] == "NCA"
 
 
-def test_extract_battery_analysis_batch_ignores_out_of_range_index(monkeypatch):
-    payload = {"analyses": [{"index": 0, "cathode": "NCA"}, {"index": 5, "cathode": "LFP"}]}
-    _install_fake_client(monkeypatch, [_ok_response(payload)])
-
-    result = asyncio.run(
-        ai_service.extract_battery_analysis_batch([("Paper A", "Abstract A")])
-    )
-
-    assert result == {0: {"index": 0, "cathode": "NCA"}}
-
-
-def test_extract_battery_analysis_batch_wraps_http_error_as_runtime_error(monkeypatch, no_sleep):
+def test_rerank_and_extract_candidates_wraps_http_error_as_runtime_error(monkeypatch, no_sleep):
     _install_fake_client(monkeypatch, [_error_response(400, "bad request")])
 
     with pytest.raises(RuntimeError):
-        asyncio.run(
-            ai_service.extract_battery_analysis_batch([("Paper A", "Abstract A")])
-        )
+        asyncio.run(ai_service.rerank_and_extract_candidates("keyword", [_candidate()]))
 
 
 # --- extract_deep_analysis ----------------------------------------------------

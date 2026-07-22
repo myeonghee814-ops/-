@@ -1,7 +1,9 @@
-"""AI stages of the pipeline: bilingual query expansion, relevance
-re-ranking, and battery-metadata extraction, all via Google's Gemini API
-native REST endpoint (generateContent) in JSON mode. Gemini's free tier
-requires no billing/credit card, unlike the OpenAI API.
+"""AI stages of the pipeline: bilingual query expansion, then a combined
+relevance re-ranking + battery-metadata extraction call, all via Google's
+Gemini API native REST endpoint (generateContent) in JSON mode. Gemini's
+free tier requires no billing/credit card, unlike the OpenAI API - but its
+free-tier requests-per-minute quota is tight, so one search deliberately
+costs only 2 Gemini calls (see rerank_and_extract_candidates) instead of 3.
 
 The AI is prompted to behave like a senior battery researcher, not a
 generic summarizer: ranking weighs chemistry/electrolyte/cell-type/
@@ -59,6 +61,14 @@ synonyms (e.g. an additive abbreviation should be paired with its full \
 chemical name; a Korean material name should be translated to its standard \
 English term).
 
+If the input includes a "focus_hint" field, it is an extra instruction from \
+the pipeline about the specific usage context the user cares about (e.g. \
+"이 물질이 전해액 첨가제 또는 용매로 사용된 논문 위주로 검색어를 확장해주세요"). Honor \
+it by adding terms (e.g. "electrolyte additive", "solvent") that steer the \
+query toward that context, so the search doesn't pull in papers where the \
+same compound is used for something unrelated (e.g. a coating agent, a \
+binder).
+
 IMPORTANT - the target search engine's query field is a PLAIN KEYWORD/PHRASE \
 list, not a boolean query language: it does NOT understand quotes, \
 parentheses, or the words AND/OR as operators - it matches them as literal \
@@ -73,14 +83,14 @@ Respond ONLY with JSON of this exact shape:
 {"english_query": "<plain space-separated search query string, no quotes/parentheses/AND/OR>", "expanded_terms": ["<term1>", "<term2>", ...]}
 """
 
-RANKING_SYSTEM_PROMPT = """\
+RERANK_AND_EXTRACT_SYSTEM_PROMPT = """\
 You are a senior battery researcher (electrochemistry, lithium-ion cells, \
 electrolytes, additives, cathodes/anodes, separators) helping a Korean \
 colleague triage a literature search. You will be given the user's original \
 search keyword and a list of candidate papers (index, title, journal, year, \
-abstract).
+abstract). For EVERY candidate, do both of the following at once.
 
-Score EVERY candidate's relevance to the keyword on a 0-100 scale, weighing:
+1) RELEVANCE: score its relevance to the keyword on a 0-100 scale, weighing:
 - battery chemistry similarity (cathode/anode materials matching the keyword's chemistry)
 - electrolyte / additive similarity
 - cell type similarity (coin cell, pouch cell, full cell, half cell)
@@ -89,69 +99,37 @@ Score EVERY candidate's relevance to the keyword on a 0-100 scale, weighing:
 - keyword / topical similarity
 - publication recency (newer generally more relevant unless the keyword implies foundational work)
 - journal quality/reputation as a secondary signal
-
 Do NOT rely on keyword text-matching alone - reason like a domain expert about \
 whether the paper's actual chemistry and experiments matter to someone \
 researching the keyword.
 
-For each candidate also write "why_selected" IN NATURAL KOREAN: one or two \
-sentences answering, specifically, "왜 이 논문을 읽어야 하는가?" (why should a \
-battery researcher read this paper) in the context of the given keyword. Be \
-concrete (mention the actual chemistry/mechanism/result), not generic. \
-Chemical names/formulas/abbreviations (NCA, LiFSI, CEI, etc.) may stay in \
-their standard scientific notation even inside the Korean sentence - only the \
-surrounding explanation must be Korean.
+Also write "why_selected" IN NATURAL KOREAN: one or two sentences answering, \
+specifically, "왜 이 논문을 읽어야 하는가?" (why should a battery researcher read \
+this paper) in the context of the given keyword. Be concrete (mention the \
+actual chemistry/mechanism/result), not generic. Chemical names/formulas/ \
+abbreviations (NCA, LiFSI, CEI, etc.) may stay in their standard scientific \
+notation even inside the Korean sentence - only the surrounding explanation \
+must be Korean.
 
 Example why_selected: "고전압 NCA Full Cell을 사용하였으며, 황계 첨가제를 이용한 \
 CEI 안정화 효과를 평가한 최신 연구입니다."
 
-Respond ONLY with JSON of the shape:
-{"rankings": [{"index": <int>, "relevance_score": <0-100 number>, "why_selected": "<Korean text>"}, ...]}
-One entry per candidate, covering every index given.
-"""
+2) EXTRACTION: extract structured battery information from the same title/ \
+abstract, for a Korean colleague who has not read the full paper yet. Be \
+precise and concise. If a field is not discernible from the abstract, use \
+"정보 없음" - never invent data. Material/chemistry fields (cathode, anode, \
+electrolyte, voltage_window, cell_type) should use standard scientific \
+notation/formulas (e.g. NCA, NMC811, LiPF6, Li metal) exactly as commonly \
+written even in Korean papers - do not force-translate chemical names. All \
+other fields must be written in natural Korean.
 
-EXTRACTION_SYSTEM_PROMPT = """\
-You are a senior battery researcher extracting structured information from a \
-paper's title and abstract for a Korean colleague who has not read the full \
-paper yet. Be precise and concise. If a field is not discernible from the \
-abstract, use "정보 없음" - never invent data.
-
-Material/chemistry fields (cathode, anode, electrolyte, voltage_window, \
-cell_type) should use standard scientific notation/formulas (e.g. NCA, \
-NMC811, LiPF6, Li metal) exactly as commonly written even in Korean papers - \
-do not force-translate chemical names. All other fields must be written in \
-natural Korean.
-
-Respond ONLY with JSON of this exact shape:
-{
-  "cathode": "<material, e.g. NCA, NMC811, LFP, or '정보 없음'>",
-  "anode": "<material, e.g. graphite, Li metal, silicon, or '정보 없음'>",
-  "electrolyte": "<electrolyte/additive system, or '정보 없음'>",
-  "voltage_window": "<e.g. '3.0-4.3 V', or '정보 없음'>",
-  "cell_type": "<e.g. coin cell (half-cell), pouch full-cell, or '정보 없음'>",
-  "experimental_conditions": "<Korean, 1-3문장: 사이클링 조건, C-rate, 온도, 테스트 셋업>",
-  "result_summary": "<Korean, 2-4문장: 핵심 정량 결과(용량 유지율, 쿨롱 효율, 율속 특성 등), \
-이 연구의 새로운 점, 강점, 한계를 하나로 종합한 요약>"
-}
-"""
-
-EXTRACTION_BATCH_SYSTEM_PROMPT = """\
-You are a senior battery researcher extracting structured information from a \
-list of papers (title + abstract) for a Korean colleague who has not read \
-the full papers yet. Be precise and concise. If a field is not discernible \
-from a paper's abstract, use "정보 없음" for that paper - never invent data.
-
-Material/chemistry fields (cathode, anode, electrolyte, voltage_window, \
-cell_type) should use standard scientific notation/formulas (e.g. NCA, \
-NMC811, LiPF6, Li metal) exactly as commonly written even in Korean papers - \
-do not force-translate chemical names. All other fields must be written in \
-natural Korean.
-
-Respond ONLY with JSON of this exact shape, one entry per paper given, \
+Respond ONLY with JSON of this exact shape, one entry per candidate given, \
 covering every index:
-{"analyses": [
+{"rankings": [
   {
     "index": <int>,
+    "relevance_score": <0-100 number>,
+    "why_selected": "<Korean text>",
     "cathode": "<material, e.g. NCA, NMC811, LFP, or '정보 없음'>",
     "anode": "<material, e.g. graphite, Li metal, silicon, or '정보 없음'>",
     "electrolyte": "<electrolyte/additive system, or '정보 없음'>",
@@ -232,7 +210,16 @@ _MIN_RETRY_DELAY_SECONDS = 30.0
 # short fixed delay before trying again is enough.
 _MAX_TIMEOUT_RETRIES = 3
 _TIMEOUT_RETRY_DELAY_SECONDS = 3.0
-_REQUEST_TIMEOUT_SECONDS = 15.0
+
+# The combined re-ranking+extraction call asks Gemini to produce a ranking
+# score/reason AND a full battery-info extraction per candidate in one
+# response - a much larger generation task than the old rerank-only call.
+# 15s (tuned for the smaller pre-merge response) still timed out at 30s
+# too - confirmed live: 20-30s elapsed with no response at all, not a
+# fast 429 - even with the candidate pool already cut to 15. Bumped to
+# 45s for headroom on top of that observed failure window; thinkingLevel
+# above should also reduce how often this ceiling gets hit at all.
+_REQUEST_TIMEOUT_SECONDS = 45.0
 
 
 def _retry_delay_seconds(resp: httpx.Response) -> float:
@@ -300,6 +287,12 @@ async def _generate_json(
     having been observed.
     """
 
+    if settings.require_caller_api_key and not gemini_api_key:
+        raise RuntimeError(
+            "이 서버는 개인 Gemini API 키가 필요합니다. 설정 페이지에서 본인의 API 키를 "
+            "입력한 뒤 다시 시도해주세요. (무료 발급: https://aistudio.google.com/apikey)"
+        )
+
     api_key = gemini_api_key or settings.gemini_api_key
     if not api_key:
         raise RuntimeError(
@@ -318,7 +311,19 @@ async def _generate_json(
     body = {
         "system_instruction": {"parts": [{"text": system_prompt}]},
         "contents": [{"parts": [{"text": json.dumps(user_payload)}]}],
-        "generationConfig": {"responseMimeType": "application/json"},
+        "generationConfig": {
+            "responseMimeType": "application/json",
+            # Gemini 3 models (gemini-3.5-flash included) spend real latency
+            # on internal "thinking" even for simple prompts (observed:
+            # ~76 thoughtsTokenCount for a 2-token "Say OK") - thinkingLevel
+            # is the Gemini-3-family control for this (thinkingBudget is the
+            # older Gemini-2.5 numeric-token equivalent and isn't the
+            # documented knob here). "minimal" is the lowest level Google
+            # documents; per their own docs it "matches the 'no thinking'
+            # setting for most queries" but isn't a hard guarantee of zero
+            # thinking on every request.
+            "thinkingConfig": {"thinkingLevel": "minimal"},
+        },
     }
 
     attempt = 0
@@ -377,15 +382,23 @@ _DEEP_ANALYSIS_BODY_TEXT_LIMIT = 20_000
 
 
 async def expand_search_query(
-    keyword: str, gemini_api_key: str | None = None
+    keyword: str, gemini_api_key: str | None = None, focus_hint: str | None = None
 ) -> tuple[str, list[str]]:
     """Translate/expand a Korean, English, or shorthand keyword into an
-    effective English Semantic Scholar search query. Returns (english_query, expanded_terms).
+    effective English Semantic Scholar search query. `focus_hint`, when
+    given, is an extra Korean instruction steering the expansion toward a
+    specific usage context (see search_pipeline's additive-only-mode call
+    site) - passed through in the payload for Gemini to honor per
+    QUERY_EXPANSION_SYSTEM_PROMPT. Returns (english_query, expanded_terms).
     """
+
+    payload: dict = {"keyword": keyword}
+    if focus_hint:
+        payload["focus_hint"] = focus_hint
 
     try:
         data = await _generate_json(
-            QUERY_EXPANSION_SYSTEM_PROMPT, {"keyword": keyword}, gemini_api_key, stage="query expansion"
+            QUERY_EXPANSION_SYSTEM_PROMPT, payload, gemini_api_key, stage="query expansion"
         )
     except (httpx.HTTPError, json.JSONDecodeError, KeyError, IndexError) as exc:
         _log_gemini_failure("query expansion", exc)
@@ -396,11 +409,25 @@ async def expand_search_query(
     return english_query, expanded_terms
 
 
-async def rerank_candidates(
+async def rerank_and_extract_candidates(
     keyword: str, candidates: list[Candidate], gemini_api_key: str | None = None
-) -> list[tuple[Candidate, float, str]]:
-    """Score every candidate against the keyword and return them sorted
-    best-first as (candidate, relevance_score, why_selected) tuples."""
+) -> list[tuple[Candidate, float, str, dict]]:
+    """Single-call replacement for the old rerank_candidates +
+    extract_battery_analysis_batch pair: scores every candidate's relevance
+    to the keyword AND extracts its battery snapshot fields from the same
+    title/abstract in one Gemini response, instead of two separate calls.
+    Cuts one search's Gemini call count from 3 (query expansion + re-ranking
+    + extraction) to 2 - the free tier's per-minute request quota is tight
+    enough that the extra round trip was routinely the difference between
+    succeeding and hitting 429.
+
+    Returns (candidate, relevance_score, why_selected, battery_info) tuples
+    sorted best-first, where battery_info is the raw per-candidate dict
+    Gemini returned (cathode/anode/electrolyte/voltage_window/cell_type/
+    experimental_conditions/result_summary) - the caller (_apply_extraction)
+    already tolerates missing keys via .get(), same as the old batch
+    extraction path.
+    """
 
     if not candidates:
         return []
@@ -420,80 +447,25 @@ async def rerank_candidates(
     }
 
     try:
-        data = await _generate_json(RANKING_SYSTEM_PROMPT, payload, gemini_api_key, stage="re-ranking")
+        data = await _generate_json(
+            RERANK_AND_EXTRACT_SYSTEM_PROMPT, payload, gemini_api_key, stage="re-ranking+extraction"
+        )
     except (httpx.HTTPError, json.JSONDecodeError, KeyError, IndexError) as exc:
-        _log_gemini_failure("re-ranking", exc)
-        raise RuntimeError(f"AI 재순위화에 실패했습니다: {exc}") from exc
+        _log_gemini_failure("re-ranking+extraction", exc)
+        raise RuntimeError(f"AI 재순위화/정보추출에 실패했습니다: {exc}") from exc
 
     rankings = data.get("rankings", [])
-    scored: list[tuple[Candidate, float, str]] = []
+    scored: list[tuple[Candidate, float, str, dict]] = []
     for entry in rankings:
         idx = entry.get("index")
         if idx is None or not (0 <= idx < len(candidates)):
             continue
         score = float(entry.get("relevance_score", 0))
         why = str(entry.get("why_selected", "")).strip()
-        scored.append((candidates[idx], score, why))
+        scored.append((candidates[idx], score, why, entry))
 
     scored.sort(key=lambda t: t[1], reverse=True)
     return scored
-
-
-async def extract_battery_analysis(
-    title: str, abstract: str, gemini_api_key: str | None = None
-) -> dict:
-    """Extract battery snapshot + Korean research analysis fields for one paper."""
-
-    try:
-        return await _generate_json(
-            EXTRACTION_SYSTEM_PROMPT,
-            {"title": title, "abstract": abstract},
-            gemini_api_key,
-            stage="battery extraction (individual)",
-        )
-    except (httpx.HTTPError, json.JSONDecodeError, KeyError, IndexError) as exc:
-        _log_gemini_failure("battery extraction (individual)", exc)
-        raise RuntimeError(f"AI 배터리 정보 추출에 실패했습니다: {exc}") from exc
-
-
-async def extract_battery_analysis_batch(
-    papers: list[tuple[str, str]], gemini_api_key: str | None = None
-) -> dict[int, dict]:
-    """Extract battery snapshot + Korean research analysis fields for
-    several papers (title, abstract) in a single Gemini call, instead of
-    one call per paper - the common case for a fresh top-N search result.
-
-    Returns {index: analysis} keyed by position in `papers`. An index
-    missing from Gemini's response (a rare JSON-shape slip, not a call
-    failure) is simply absent from the result - the caller falls back to
-    a "정보 없음" default for just that paper instead of retrying.
-    """
-
-    if not papers:
-        return {}
-
-    payload = {
-        "papers": [
-            {"index": i, "title": title, "abstract": _truncate(abstract)}
-            for i, (title, abstract) in enumerate(papers)
-        ]
-    }
-
-    try:
-        data = await _generate_json(
-            EXTRACTION_BATCH_SYSTEM_PROMPT, payload, gemini_api_key, stage="battery extraction (batch)"
-        )
-    except (httpx.HTTPError, json.JSONDecodeError, KeyError, IndexError) as exc:
-        _log_gemini_failure("battery extraction (batch)", exc)
-        raise RuntimeError(f"AI 배터리 정보 일괄 추출에 실패했습니다: {exc}") from exc
-
-    results: dict[int, dict] = {}
-    for entry in data.get("analyses", []):
-        idx = entry.get("index")
-        if idx is None or not (0 <= idx < len(papers)):
-            continue
-        results[idx] = entry
-    return results
 
 
 async def extract_deep_analysis(

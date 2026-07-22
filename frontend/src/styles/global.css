@@ -1,9 +1,9 @@
 :root {
-  --color-bg: #ffffff;
+  --blip-bg: #ffffff;
   --color-surface: #f5f6f7;
   --color-surface-hover: #eceeef;
-  --color-border: #e5e7eb;
-  --color-text: #1a1d1f;
+  --blip-border: #e5e7eb;
+  --blip-text: #1a1d1f;
   --color-text-dim: #6b7280;
   --color-badge-bg: #e8e9ea;
   --color-accent: #1e7a4c;
@@ -21,8 +21,8 @@
 
 body {
   margin: 0;
-  background: var(--color-bg);
-  color: var(--color-text);
+  background: var(--blip-bg);
+  color: var(--blip-text);
 }
 
 .app {
@@ -33,17 +33,50 @@ body {
 
 .app-header {
   padding: 1rem 2rem;
-  border-bottom: 1px solid var(--color-border);
+  border-bottom: 1px solid var(--blip-border);
   display: flex;
   align-items: center;
   justify-content: space-between;
 }
 
+.app-header-left {
+  display: flex;
+  align-items: center;
+  gap: 2rem;
+}
+
 .brand {
-  color: var(--color-text);
+  color: var(--blip-text);
   text-decoration: none;
   font-weight: 700;
   font-size: 1.2rem;
+}
+
+.tab-bar {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.tab-link {
+  padding: 0.4rem 0.9rem;
+  border-radius: 999px;
+  color: var(--color-text-dim);
+  text-decoration: none;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.tab-link:hover {
+  color: var(--blip-text);
+}
+
+.tab-link-active {
+  background: var(--color-accent-dim);
+  color: var(--color-accent);
+}
+
+.tab-link-active:hover {
+  color: var(--color-accent);
 }
 
 .settings-link {
@@ -53,7 +86,7 @@ body {
 }
 
 .settings-link:hover {
-  color: var(--color-text);
+  color: var(--blip-text);
 }
 
 .brand-sub {
@@ -69,6 +102,16 @@ body {
   width: 100%;
   margin: 0 auto;
   padding: 2rem 1.5rem 4rem;
+}
+
+/* Full-bleed variant for the "논문 요약" tab, which ports
+   battery-paper-summarizer's own sidebar+content layout as-is - that
+   layout expects the full viewport width, not the centered 960px reading
+   column the other pages use. */
+.app-main-full {
+  flex: 1;
+  min-height: 0;
+  display: flex;
 }
 
 /* Home page */
@@ -107,14 +150,14 @@ body {
 .search-field-label {
   font-size: 0.9rem;
   font-weight: 600;
-  color: var(--color-text);
+  color: var(--blip-text);
 }
 
-.search-field-required {
-  font-size: 0.75rem;
-  font-weight: 500;
-  color: var(--color-accent);
-  margin-left: 0.35rem;
+.search-field-hint {
+  font-size: 0.8rem;
+  color: var(--color-text-dim);
+  margin-top: 0.35rem;
+  line-height: 1.5;
 }
 
 .search-field-optional {
@@ -133,9 +176,9 @@ body {
 .search-input {
   padding: 0.85rem 1rem;
   border-radius: 8px;
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--blip-border);
   background: var(--color-surface);
-  color: var(--color-text);
+  color: var(--blip-text);
   font-size: 1rem;
   width: 100%;
 }
@@ -168,7 +211,7 @@ body {
 .example-chip {
   padding: 0.4rem 0.8rem;
   border-radius: 999px;
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--blip-border);
   background: transparent;
   color: var(--color-text-dim);
   cursor: pointer;
@@ -177,19 +220,19 @@ body {
 
 .example-chip:hover:not(:disabled) {
   border-color: var(--color-accent);
-  color: var(--color-text);
+  color: var(--blip-text);
 }
 
 .example-chip-active {
   border-color: var(--color-accent);
   background: var(--color-accent-dim);
-  color: var(--color-text);
+  color: var(--blip-text);
 }
 
 /* Sort-by toggle */
 .sort-toggle {
   display: inline-flex;
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--blip-border);
   border-radius: 8px;
   overflow: hidden;
   width: fit-content;
@@ -206,11 +249,11 @@ body {
 }
 
 .sort-toggle-option:not(:first-child) {
-  border-left: 1px solid var(--color-border);
+  border-left: 1px solid var(--blip-border);
 }
 
 .sort-toggle-option:hover:not(:disabled) {
-  color: var(--color-text);
+  color: var(--blip-text);
 }
 
 .sort-toggle-option:disabled {
@@ -238,7 +281,7 @@ body {
   width: 28px;
   height: 28px;
   margin: 0 auto 0.75rem;
-  border: 3px solid var(--color-border);
+  border: 3px solid var(--blip-border);
   border-top-color: var(--color-accent);
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
@@ -288,7 +331,7 @@ body {
 }
 
 .results-heading span {
-  color: var(--color-text);
+  color: var(--blip-text);
   font-weight: 600;
 }
 
@@ -304,20 +347,57 @@ body {
   gap: 1rem;
 }
 
-/* Paper card */
+/* Paper card - a plain div (not <a>), since the title and "PDF 보기" are
+   now their own external links and can't nest inside an outer <a>. Click
+   anywhere else on the card still navigates to the internal detail page
+   (see PaperCard.tsx's onClick/onKeyDown), so it needs to look and behave
+   like the clickable surface it still is. */
 .paper-card {
   display: block;
   background: var(--color-surface);
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--blip-border);
   border-radius: 12px;
   padding: 1.25rem 1.5rem;
-  text-decoration: none;
-  color: var(--color-text);
+  color: var(--blip-text);
+  cursor: pointer;
   transition: background 0.15s ease, border-color 0.15s ease;
 }
 
 .paper-card:hover {
   background: var(--color-surface-hover);
+  border-color: var(--color-accent-dim);
+}
+
+.paper-card:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.paper-card-title-link {
+  color: inherit;
+  text-decoration: none;
+}
+
+.paper-card-title-link:hover {
+  color: var(--color-accent);
+  text-decoration: underline;
+}
+
+.paper-card-pdf-link {
+  display: inline-flex;
+  align-items: center;
+  margin-top: 0.6rem;
+  padding: 0.3rem 0.75rem;
+  border: 1px solid var(--blip-border);
+  border-radius: 999px;
+  color: var(--color-accent);
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.paper-card-pdf-link:hover {
+  background: var(--color-accent-dim);
   border-color: var(--color-accent-dim);
 }
 
@@ -452,7 +532,7 @@ body {
 .detail-section {
   margin-top: 1.75rem;
   padding-top: 1.75rem;
-  border-top: 1px solid var(--color-border);
+  border-top: 1px solid var(--blip-border);
 }
 
 .detail-section h3 {
@@ -550,9 +630,9 @@ body {
 .settings-input {
   padding: 0.85rem 1rem;
   border-radius: 8px;
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--blip-border);
   background: var(--color-surface);
-  color: var(--color-text);
+  color: var(--blip-text);
   font-size: 1rem;
 }
 
@@ -576,7 +656,7 @@ body {
 .settings-disclaimer {
   margin-top: 2rem;
   padding-top: 1.5rem;
-  border-top: 1px solid var(--color-border);
+  border-top: 1px solid var(--blip-border);
   color: var(--color-text-dim);
   font-size: 0.85rem;
   line-height: 1.6;

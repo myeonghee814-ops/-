@@ -1,6 +1,6 @@
 """Downloads an open-access PDF and extracts structured text from it, for the
 on-demand "자세히 분석" deep-analysis flow. Abstract-only extraction
-(ai_service.extract_battery_analysis) can't recover experiment-level detail
+(ai_service.rerank_and_extract_candidates) can't recover experiment-level detail
 that only lives in the paper's body (exact electrolyte composition, voltage
 window, cell type) - this fetches the actual PDF text so Gemini has that
 detail to work with.

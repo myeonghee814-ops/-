@@ -1,13 +1,15 @@
 """Unit tests for search_pipeline.py:
 
-- graceful degradation when a Gemini call (query expansion, re-ranking,
-  or battery extraction) fails or the time budget runs out - the pipeline
-  should still return a usable result instead of failing the whole
-  search, and report `ai_degraded=True` so the caller can surface a
-  notice.
-- batched battery extraction (one call for all not-yet-cached papers,
-  falling back to one-call-per-paper only if the batch call itself
-  fails) and the final (year desc, relevance score desc) sort.
+- graceful degradation when a Gemini call (query expansion, or the
+  combined re-ranking + battery extraction call) fails or the time budget
+  runs out - the pipeline should still return a usable result instead of
+  failing the whole search, and report `ai_degraded=True` so the caller
+  can surface a notice.
+- re-ranking and battery extraction sharing one Gemini call/response, with
+  already-extracted papers never having that response's battery_info
+  applied to them (but still sent through re-ranking, since relevance is
+  query-specific and can't be cached) - and the final (year desc,
+  relevance score desc) sort.
 """
 
 import asyncio
@@ -46,47 +48,23 @@ def _candidate(paper_id="p1", title="A Paper", year=2024) -> semantic_scholar_se
     )
 
 
-async def _fake_expand_ok(keyword, gemini_api_key=None):
+async def _fake_expand_ok(keyword, gemini_api_key=None, focus_hint=None):
     return f"expanded {keyword}", ["term"]
 
 
-async def _fake_expand_fails(keyword, gemini_api_key=None):
+async def _fake_expand_fails(keyword, gemini_api_key=None, focus_hint=None):
     raise RuntimeError("AI 검색어 확장에 실패했습니다: 503")
 
 
 async def _fake_rerank_ok(keyword, candidates, gemini_api_key=None):
-    return [(c, 90.0, "관련성이 높습니다.") for c in candidates]
+    return [
+        (c, 90.0, "관련성이 높습니다.", {"cathode": "NCA", "anode": "Graphite", "result_summary": "좋음"})
+        for c in candidates
+    ]
 
 
 async def _fake_rerank_fails(keyword, candidates, gemini_api_key=None):
-    raise RuntimeError("AI 재순위화에 실패했습니다: 503")
-
-
-async def _fake_extract_individual_ok(title, abstract, gemini_api_key=None):
-    return {"cathode": "NCA", "anode": "Graphite", "result_summary": "좋음"}
-
-
-async def _fake_extract_individual_fails(title, abstract, gemini_api_key=None):
-    raise RuntimeError("AI 배터리 정보 추출에 실패했습니다: 503")
-
-
-async def _fake_extract_individual_must_not_be_called(title, abstract, gemini_api_key=None):
-    raise AssertionError("individual extraction should not be called")
-
-
-async def _fake_extract_batch_ok(papers, gemini_api_key=None):
-    return {
-        i: {"cathode": "NCA", "anode": "Graphite", "result_summary": "좋음"}
-        for i in range(len(papers))
-    }
-
-
-async def _fake_extract_batch_fails(papers, gemini_api_key=None):
-    raise RuntimeError("AI 배터리 정보 일괄 추출에 실패했습니다: 503")
-
-
-async def _fake_extract_batch_must_not_be_called(papers, gemini_api_key=None):
-    raise AssertionError("batch extraction should not be called")
+    raise RuntimeError("AI 재순위화/정보추출에 실패했습니다: 503")
 
 
 def _patch_search_candidates(monkeypatch, candidates):
@@ -96,13 +74,9 @@ def _patch_search_candidates(monkeypatch, candidates):
     monkeypatch.setattr(search_pipeline.semantic_scholar_service, "search_candidates", _fake)
 
 
-def _patch_ai_defaults(monkeypatch, *, expand=_fake_expand_ok, rerank=_fake_rerank_ok, batch=None, individual=None):
+def _patch_ai_defaults(monkeypatch, *, expand=_fake_expand_ok, rerank=_fake_rerank_ok):
     monkeypatch.setattr(search_pipeline.ai_service, "expand_search_query", expand)
-    monkeypatch.setattr(search_pipeline.ai_service, "rerank_candidates", rerank)
-    if batch is not None:
-        monkeypatch.setattr(search_pipeline.ai_service, "extract_battery_analysis_batch", batch)
-    if individual is not None:
-        monkeypatch.setattr(search_pipeline.ai_service, "extract_battery_analysis", individual)
+    monkeypatch.setattr(search_pipeline.ai_service, "rerank_and_extract_candidates", rerank)
 
 
 # --- _api_search_query --------------------------------------------------------
@@ -123,11 +97,7 @@ def test_api_search_query_appends_suffix_after_hangul_and_boolean_stripping():
 
 
 def test_run_search_happy_path_not_degraded(monkeypatch, db):
-    _patch_ai_defaults(
-        monkeypatch,
-        batch=_fake_extract_batch_ok,
-        individual=_fake_extract_individual_must_not_be_called,
-    )
+    _patch_ai_defaults(monkeypatch)
     _patch_search_candidates(monkeypatch, [_candidate()])
 
     search_query, ai_degraded = asyncio.run(search_pipeline.run_search(db, "실리콘 음극"))
@@ -145,7 +115,7 @@ def test_run_search_falls_back_to_dictionary_when_expansion_fails(monkeypatch, d
     keyword - it should use battery_term_mapping's static dictionary
     instead, so Semantic Scholar still gets an accurate English query."""
 
-    _patch_ai_defaults(monkeypatch, expand=_fake_expand_fails, batch=_fake_extract_batch_ok)
+    _patch_ai_defaults(monkeypatch, expand=_fake_expand_fails)
     _patch_search_candidates(monkeypatch, [_candidate()])
 
     search_query, ai_degraded = asyncio.run(search_pipeline.run_search(db, "실리콘 음극"))
@@ -173,7 +143,7 @@ def test_run_search_strips_unmapped_hangul_from_the_semantic_scholar_query(monke
         return [_candidate()]
 
     monkeypatch.setattr(search_pipeline.semantic_scholar_service, "search_candidates", _fake_search)
-    _patch_ai_defaults(monkeypatch, expand=_fake_expand_fails, batch=_fake_extract_batch_ok)
+    _patch_ai_defaults(monkeypatch, expand=_fake_expand_fails)
 
     search_query, ai_degraded = asyncio.run(
         search_pipeline.run_search(db, "Mid-Ni 고전압 Sulfur additive")
@@ -200,7 +170,7 @@ def test_run_search_strips_boolean_query_syntax_from_gemini_expansion(monkeypatc
     have matched plenty on its own. This was the real cause of at least one
     previously-unexplained "no results" search."""
 
-    async def _fake_expand_boolean_syntax(keyword, gemini_api_key=None):
+    async def _fake_expand_boolean_syntax(keyword, gemini_api_key=None, focus_hint=None):
         return (
             '("NCM613" OR "NCM 613" OR "NMC613") AND ("high voltage" OR "고전압")',
             ["NCM613", "high voltage"],
@@ -213,7 +183,7 @@ def test_run_search_strips_boolean_query_syntax_from_gemini_expansion(monkeypatc
         return [_candidate()]
 
     monkeypatch.setattr(search_pipeline.semantic_scholar_service, "search_candidates", _fake_search)
-    _patch_ai_defaults(monkeypatch, expand=_fake_expand_boolean_syntax, batch=_fake_extract_batch_ok)
+    _patch_ai_defaults(monkeypatch, expand=_fake_expand_boolean_syntax)
 
     search_query, ai_degraded = asyncio.run(search_pipeline.run_search(db, "NCM613 고전압"))
 
@@ -254,7 +224,7 @@ def test_run_search_expands_additive_category_via_gemini(monkeypatch, db):
 
     monkeypatch.setattr(search_pipeline.ai_service, "expand_compound_category", _fake_expand_category)
     monkeypatch.setattr(search_pipeline.semantic_scholar_service, "search_candidates", _fake_search)
-    _patch_ai_defaults(monkeypatch, batch=_fake_extract_batch_ok)
+    _patch_ai_defaults(monkeypatch)
 
     search_query, ai_degraded = asyncio.run(
         search_pipeline.run_search(db, "NCA", additive_or_solvent="불소계")
@@ -276,7 +246,7 @@ def test_run_search_falls_back_to_category_dictionary_when_gemini_unavailable(mo
     monkeypatch.setattr(
         search_pipeline.ai_service, "expand_compound_category", _fake_expand_category_fails
     )
-    _patch_ai_defaults(monkeypatch, batch=_fake_extract_batch_ok)
+    _patch_ai_defaults(monkeypatch)
     _patch_search_candidates(monkeypatch, [_candidate()])
 
     search_query, ai_degraded = asyncio.run(
@@ -296,7 +266,7 @@ def test_run_search_warns_when_category_has_no_fallback_and_gemini_fails(monkeyp
     monkeypatch.setattr(
         search_pipeline.ai_service, "expand_compound_category", _fake_expand_category_fails
     )
-    _patch_ai_defaults(monkeypatch, batch=_fake_extract_batch_ok)
+    _patch_ai_defaults(monkeypatch)
     _patch_search_candidates(monkeypatch, [_candidate()])
 
     search_query, ai_degraded = asyncio.run(
@@ -316,7 +286,7 @@ def test_run_search_skips_category_expansion_for_a_specific_compound(monkeypatch
         raise AssertionError("expand_compound_category should not be called for a specific compound")
 
     monkeypatch.setattr(search_pipeline.ai_service, "expand_compound_category", _must_not_be_called)
-    _patch_ai_defaults(monkeypatch, batch=_fake_extract_batch_ok)
+    _patch_ai_defaults(monkeypatch)
     _patch_search_candidates(monkeypatch, [_candidate()])
 
     search_query, ai_degraded = asyncio.run(
@@ -349,7 +319,7 @@ def test_run_search_retries_with_material_only_when_full_query_returns_zero(monk
 
     monkeypatch.setattr(search_pipeline.semantic_scholar_service, "search_candidates", _fake_search)
     monkeypatch.setattr(search_pipeline.ai_service, "expand_compound_category", _fake_expand_category)
-    _patch_ai_defaults(monkeypatch, batch=_fake_extract_batch_ok)
+    _patch_ai_defaults(monkeypatch)
 
     search_query, ai_degraded = asyncio.run(
         search_pipeline.run_search(db, "NCA", additive_or_solvent="불소계")
@@ -361,12 +331,98 @@ def test_run_search_retries_with_material_only_when_full_query_returns_zero(monk
     assert len(search_query.results) == 1
 
 
+# --- additive-only mode (material empty, additive_or_solvent given) -----------
+
+
+async def _fake_rerank_electrolyte_mixed(keyword, candidates, gemini_api_key=None):
+    """Both candidates get the SAME relevance_score from Gemini - only
+    their extracted electrolyte field differs, isolating the score
+    adjustment itself from Gemini's own (independent) relevance judgment."""
+
+    infos = {
+        "p1": {"electrolyte": "1M LiPF6 in EC/DMC with 5wt% FEC additive"},
+        "p2": {"electrolyte": "1M LiPF6 in EC/DEC"},
+    }
+    return [(c, 70.0, "", infos[c.paper_id]) for c in candidates]
+
+
+def test_run_search_additive_only_mode_passes_focus_hint(monkeypatch, db):
+    captured = {}
+
+    async def _fake_expand_capture(keyword, gemini_api_key=None, focus_hint=None):
+        captured["focus_hint"] = focus_hint
+        return f"expanded {keyword}", ["term"]
+
+    _patch_ai_defaults(monkeypatch, expand=_fake_expand_capture)
+    _patch_search_candidates(monkeypatch, [_candidate()])
+
+    asyncio.run(search_pipeline.run_search(db, "", additive_or_solvent="FEC"))
+
+    assert captured["focus_hint"] == search_pipeline._ADDITIVE_ONLY_QUERY_FOCUS_HINT
+
+
+def test_run_search_with_material_omits_focus_hint(monkeypatch, db):
+    """Regression: giving a material must NOT trigger additive-only mode,
+    even when additive_or_solvent is also given."""
+
+    captured = {}
+
+    async def _fake_expand_capture(keyword, gemini_api_key=None, focus_hint=None):
+        captured["focus_hint"] = focus_hint
+        return f"expanded {keyword}", ["term"]
+
+    _patch_ai_defaults(monkeypatch, expand=_fake_expand_capture)
+    _patch_search_candidates(monkeypatch, [_candidate()])
+
+    asyncio.run(search_pipeline.run_search(db, "NCA", additive_or_solvent="FEC"))
+
+    assert captured["focus_hint"] is None
+
+
+def test_run_search_additive_only_mode_boosts_electrolyte_mentioning_candidate(monkeypatch, db):
+    """When searching by additive alone (no material), a candidate whose
+    extracted electrolyte field actually mentions the additive should
+    outrank one whose extracted electrolyte field doesn't - even though
+    Gemini's own relevance_score was identical for both (e.g. because the
+    second paper uses the compound for something unrelated, like a coating
+    agent, which its electrolyte field naturally wouldn't mention)."""
+
+    _patch_ai_defaults(monkeypatch, rerank=_fake_rerank_electrolyte_mixed)
+    candidates = [_candidate("p1", "Uses FEC in electrolyte"), _candidate("p2", "Uses FEC as coating agent")]
+    _patch_search_candidates(monkeypatch, candidates)
+
+    search_query, ai_degraded = asyncio.run(search_pipeline.run_search(db, "", additive_or_solvent="FEC"))
+
+    assert ai_degraded is False
+    titles = [r.paper.title for r in search_query.results]
+    assert titles == ["Uses FEC in electrolyte", "Uses FEC as coating agent"]
+    scores = {r.paper.title: r.relevance_score for r in search_query.results}
+    assert scores["Uses FEC in electrolyte"] == 70.0 + search_pipeline._ADDITIVE_CONTEXT_SCORE_BOOST
+    assert scores["Uses FEC as coating agent"] == 70.0 - search_pipeline._ADDITIVE_CONTEXT_SCORE_PENALTY
+
+
+def test_run_search_with_material_skips_additive_context_adjustment(monkeypatch, db):
+    """Regression: when a material IS given, the additive-context score
+    adjustment must not run at all - both candidates keep Gemini's own
+    (identical) relevance_score untouched, regardless of what their
+    extracted electrolyte field says."""
+
+    _patch_ai_defaults(monkeypatch, rerank=_fake_rerank_electrolyte_mixed)
+    candidates = [_candidate("p1", "First"), _candidate("p2", "Second")]
+    _patch_search_candidates(monkeypatch, candidates)
+
+    search_query, ai_degraded = asyncio.run(search_pipeline.run_search(db, "NCA", additive_or_solvent="FEC"))
+
+    assert ai_degraded is False
+    assert all(r.relevance_score == 70.0 for r in search_query.results)
+
+
 def test_run_search_falls_back_to_original_order_when_reranking_fails(monkeypatch, db):
     """Full degradation (re-ranking itself failed, every score is 0) must
     keep Semantic Scholar's own order verbatim - NOT re-sort by year, even
     though the older paper happens to come first here."""
 
-    _patch_ai_defaults(monkeypatch, rerank=_fake_rerank_fails, batch=_fake_extract_batch_ok)
+    _patch_ai_defaults(monkeypatch, rerank=_fake_rerank_fails)
     candidates = [
         _candidate("p1", "First", year=2018),
         _candidate("p2", "Second", year=2024),
@@ -387,11 +443,11 @@ def test_run_search_demotes_lexically_unrelated_candidates_when_reranking_fails(
     should sink below one that does, even if Semantic Scholar returned it
     first."""
 
-    async def _fake_expand_silicon(keyword, gemini_api_key=None):
+    async def _fake_expand_silicon(keyword, gemini_api_key=None, focus_hint=None):
         return "silicon anode SEI", ["silicon anode", "SEI"]
 
     _patch_ai_defaults(
-        monkeypatch, expand=_fake_expand_silicon, rerank=_fake_rerank_fails, batch=_fake_extract_batch_ok
+        monkeypatch, expand=_fake_expand_silicon, rerank=_fake_rerank_fails
     )
     unrelated = semantic_scholar_service.Candidate(
         paper_id="p1",
@@ -426,11 +482,11 @@ def test_run_search_demotes_off_domain_candidate_below_lexically_unrelated_one(m
     OFF_DOMAIN_KEYWORDS match is detected - lexical overlap alone isn't
     enough to trust a candidate is actually on-topic."""
 
-    async def _fake_expand_fec(keyword, gemini_api_key=None):
+    async def _fake_expand_fec(keyword, gemini_api_key=None, focus_hint=None):
         return "FEC battery electrolyte", ["FEC"]
 
     _patch_ai_defaults(
-        monkeypatch, expand=_fake_expand_fec, rerank=_fake_rerank_fails, batch=_fake_extract_batch_ok
+        monkeypatch, expand=_fake_expand_fec, rerank=_fake_rerank_fails
     )
     networking = semantic_scholar_service.Candidate(
         paper_id="p1",
@@ -467,30 +523,12 @@ def test_run_search_demotes_off_domain_candidate_below_lexically_unrelated_one(m
     assert [r.paper.title for r in search_query.results] == [battery.title, unrelated.title, networking.title]
 
 
-def test_run_search_falls_back_to_individual_calls_when_batch_fails(monkeypatch, db):
-    _patch_ai_defaults(
-        monkeypatch,
-        batch=_fake_extract_batch_fails,
-        individual=_fake_extract_individual_ok,
-    )
-    candidates = [_candidate("p1", "First"), _candidate("p2", "Second")]
-    _patch_search_candidates(monkeypatch, candidates)
+def test_run_search_falls_back_to_no_info_when_reranking_fails(monkeypatch, db):
+    """Re-ranking and extraction now share one Gemini call - when it fails
+    there is no separate extraction attempt to fall back to, so a
+    not-yet-cached paper is simply left with empty placeholder fields."""
 
-    search_query, ai_degraded = asyncio.run(search_pipeline.run_search(db, "실리콘 음극"))
-
-    # The batch call failed, but every individual fallback call succeeded -
-    # so the result set is fully enriched and NOT degraded.
-    assert ai_degraded is False
-    assert search_query.ai_degraded is False
-    assert all(r.paper.cathode == "NCA" for r in search_query.results)
-
-
-def test_run_search_falls_back_to_no_info_when_individual_extraction_fails(monkeypatch, db):
-    _patch_ai_defaults(
-        monkeypatch,
-        batch=_fake_extract_batch_fails,
-        individual=_fake_extract_individual_fails,
-    )
+    _patch_ai_defaults(monkeypatch, rerank=_fake_rerank_fails)
     _patch_search_candidates(monkeypatch, [_candidate()])
 
     search_query, ai_degraded = asyncio.run(search_pipeline.run_search(db, "실리콘 음극"))
@@ -502,42 +540,35 @@ def test_run_search_falls_back_to_no_info_when_individual_extraction_fails(monke
     assert paper.is_extracted is False
 
 
-def test_run_search_batch_partial_response_defaults_missing_paper_without_retry(monkeypatch, db):
-    async def _fake_batch_partial(papers, gemini_api_key=None):
-        # Only the first paper is analyzed - the second is missing from
-        # Gemini's response entirely (a JSON-shape slip, not a call failure).
-        return {0: {"cathode": "NCA", "anode": "Graphite", "result_summary": "좋음"}}
+def test_run_search_applies_partial_battery_fields_with_defaults(monkeypatch, db):
+    """A ranking entry that omits some battery-info keys (a JSON-shape
+    slip, not a call failure) still gets its present fields applied and is
+    marked extracted - _apply_extraction's own .get() defaults fill in the
+    rest, same as before the merge."""
 
-    _patch_ai_defaults(
-        monkeypatch,
-        batch=_fake_batch_partial,
-        individual=_fake_extract_individual_must_not_be_called,
-    )
-    candidates = [_candidate("p1", "First"), _candidate("p2", "Second")]
-    _patch_search_candidates(monkeypatch, candidates)
+    async def _fake_rerank_partial(keyword, candidates, gemini_api_key=None):
+        return [(c, 90.0, "", {"cathode": "NCA"}) for c in candidates]
+
+    _patch_ai_defaults(monkeypatch, rerank=_fake_rerank_partial)
+    _patch_search_candidates(monkeypatch, [_candidate()])
 
     search_query, ai_degraded = asyncio.run(search_pipeline.run_search(db, "실리콘 음극"))
 
-    assert ai_degraded is True
-    by_title = {r.paper.title: r.paper for r in search_query.results}
-    assert by_title["First"].cathode == "NCA"
-    assert by_title["First"].is_extracted is True
-    assert by_title["Second"].cathode == ""
-    assert by_title["Second"].is_extracted is False
+    assert ai_degraded is False
+    paper = search_query.results[0].paper
+    assert paper.cathode == "NCA"
+    assert paper.electrolyte == "정보 없음"
+    assert paper.is_extracted is True
 
 
-def test_run_search_skips_already_extracted_papers_in_batch(monkeypatch, db):
+def test_run_search_does_not_overwrite_already_extracted_papers(monkeypatch, db):
     calls = []
 
-    async def _fake_batch_records_calls(papers, gemini_api_key=None):
-        calls.append(papers)
-        return {i: {"cathode": "NCA"} for i in range(len(papers))}
+    async def _fake_rerank_records_calls(keyword, candidates, gemini_api_key=None):
+        calls.append(candidates)
+        return [(c, 90.0, "", {"cathode": "NCA"}) for c in candidates]
 
-    _patch_ai_defaults(
-        monkeypatch,
-        batch=_fake_batch_records_calls,
-        individual=_fake_extract_individual_must_not_be_called,
-    )
+    _patch_ai_defaults(monkeypatch, rerank=_fake_rerank_records_calls)
     cached_candidate = _candidate("p1", "Cached Paper")
     new_candidate = _candidate("p2", "New Paper")
     _patch_search_candidates(monkeypatch, [cached_candidate, new_candidate])
@@ -550,8 +581,11 @@ def test_run_search_skips_already_extracted_papers_in_batch(monkeypatch, db):
     search_query, ai_degraded = asyncio.run(search_pipeline.run_search(db, "실리콘 음극"))
 
     assert ai_degraded is False
-    # Only the uncached paper's (title, abstract) went to the batch call.
-    assert calls == [[("New Paper", "An abstract.")]]
+    # Both candidates still go through re-ranking (relevance is
+    # query-specific and can't be cached) - only applying the battery_info
+    # is skipped for the already-extracted one.
+    assert len(calls) == 1
+    assert {c.title for c in calls[0]} == {"Cached Paper", "New Paper"}
     by_title = {r.paper.title: r.paper for r in search_query.results}
     assert by_title["Cached Paper"].cathode == "LFP"
     assert by_title["New Paper"].cathode == "NCA"
@@ -559,11 +593,7 @@ def test_run_search_skips_already_extracted_papers_in_batch(monkeypatch, db):
 
 def test_run_search_skips_extraction_when_time_budget_exhausted(monkeypatch, db):
     monkeypatch.setattr(search_pipeline, "_SEARCH_TIME_BUDGET_SECONDS", -100.0)
-    _patch_ai_defaults(
-        monkeypatch,
-        batch=_fake_extract_batch_must_not_be_called,
-        individual=_fake_extract_individual_must_not_be_called,
-    )
+    _patch_ai_defaults(monkeypatch)
     _patch_search_candidates(monkeypatch, [_candidate()])
 
     search_query, ai_degraded = asyncio.run(search_pipeline.run_search(db, "실리콘 음극"))
@@ -583,9 +613,9 @@ def test_run_search_sorts_by_relevance_score_then_year(monkeypatch, db):
 
     async def _fake_rerank_mixed(keyword, candidates, gemini_api_key=None):
         scores = {"old-high-score": 90.0, "new-low-score": 10.0, "new-tied-score": 50.0, "old-tied-score": 50.0}
-        return [(c, scores[c.paper_id], "") for c in candidates]
+        return [(c, scores[c.paper_id], "", {}) for c in candidates]
 
-    _patch_ai_defaults(monkeypatch, rerank=_fake_rerank_mixed, batch=_fake_extract_batch_ok)
+    _patch_ai_defaults(monkeypatch, rerank=_fake_rerank_mixed)
     candidates = [
         _candidate("new-low-score", "New Low Score", year=2024),
         _candidate("old-high-score", "Old High Score", year=2018),
@@ -614,9 +644,9 @@ def test_run_search_sort_by_recency_prioritizes_year_then_score(monkeypatch, db)
 
     async def _fake_rerank_mixed(keyword, candidates, gemini_api_key=None):
         scores = {"new-low-score": 10.0, "old-high-score": 90.0, "old-tied-score": 50.0, "new-tied-score": 50.0}
-        return [(c, scores[c.paper_id], "") for c in candidates]
+        return [(c, scores[c.paper_id], "", {}) for c in candidates]
 
-    _patch_ai_defaults(monkeypatch, rerank=_fake_rerank_mixed, batch=_fake_extract_batch_ok)
+    _patch_ai_defaults(monkeypatch, rerank=_fake_rerank_mixed)
     candidates = [
         _candidate("old-high-score", "Old High Score", year=2018),
         _candidate("new-low-score", "New Low Score", year=2024),
@@ -647,7 +677,7 @@ def test_run_search_sort_by_is_ignored_when_reranking_fails(monkeypatch, db):
     Semantic Scholar's own order regardless of sort_by - not resorted by
     year even when sort_by="recency" was explicitly requested."""
 
-    _patch_ai_defaults(monkeypatch, rerank=_fake_rerank_fails, batch=_fake_extract_batch_ok)
+    _patch_ai_defaults(monkeypatch, rerank=_fake_rerank_fails)
     candidates = [
         _candidate("p1", "First", year=2018),
         _candidate("p2", "Second", year=2024),

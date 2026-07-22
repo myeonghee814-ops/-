@@ -12,6 +12,8 @@ interface SamplePaper {
   journal: string;
   year: number;
   doi: string;
+  /** Semantic Scholar paper ID - used for the fallback link when a sample has no DOI. */
+  external_paper_id: string;
   abstract: string;
   why_selected: string;
   battery_snapshot: BatterySnapshot;
@@ -28,6 +30,7 @@ const SAMPLE_PAPERS: SamplePaper[] = [
     journal: "Journal of Power Sources",
     year: 2025,
     doi: "10.1016/j.jpowsour.2025.234567",
+    external_paper_id: "649def34f8be52c8b66281af98ae884c09aef38",
     open_access_pdf_url: "https://example.com/sample-papers/sulfur-cei-stabilization.pdf",
     abstract:
       "This study investigates a sulfur-containing electrolyte additive for NCA cathodes to improve cathode-electrolyte interphase (CEI) stability and cycling performance in high-voltage lithium-ion pouch full cells.",
@@ -50,6 +53,7 @@ const SAMPLE_PAPERS: SamplePaper[] = [
     journal: "Nature Energy",
     year: 2024,
     doi: "10.1038/s41560-024-01543-2",
+    external_paper_id: "204e3073870fae3d05bcbc2f6a8e263d9b72e776",
     open_access_pdf_url: "",
     abstract:
       "A high-concentration LiFSI-based electrolyte is shown to suppress silicon anode volume expansion side reactions, forming a robust SEI layer that enables stable cycling of high-capacity silicon anodes.",
@@ -72,6 +76,7 @@ const SAMPLE_PAPERS: SamplePaper[] = [
     journal: "Journal of the Electrochemical Society",
     year: 2023,
     doi: "10.1149/1945-7111/acb123",
+    external_paper_id: "3a1b9c2d4e5f6789abcdef0123456789abcdef01",
     open_access_pdf_url: "https://example.com/sample-papers/tempo-redox-shuttle.pdf",
     abstract:
       "TEMPO derivatives are evaluated as redox shuttle additives that provide reversible overcharge protection for NMC-based lithium-ion cells without degrading normal cycling performance.",
@@ -94,6 +99,7 @@ const SAMPLE_PAPERS: SamplePaper[] = [
     journal: "Advanced Energy Materials",
     year: 2024,
     doi: "10.1002/aenm.202400987",
+    external_paper_id: "7f6e5d4c3b2a1908070605040302010009080706",
     open_access_pdf_url: "",
     abstract:
       "A localized high-concentration electrolyte (LHCE) formulation is developed to enable stable cycling of lithium metal anodes against high-voltage cathodes up to 4.5V.",
@@ -116,6 +122,7 @@ const SAMPLE_PAPERS: SamplePaper[] = [
     journal: "Joule",
     year: 2023,
     doi: "10.1016/j.joule.2023.05.011",
+    external_paper_id: "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4",
     open_access_pdf_url: "https://example.com/sample-papers/sulfide-interface-engineering.pdf",
     abstract:
       "This work addresses interfacial resistance between sulfide solid electrolytes and cathode active materials through a novel coating strategy for all-solid-state lithium batteries.",
@@ -183,6 +190,8 @@ export async function mockSearchPapers(request: SearchRequest): Promise<SearchRe
       journal: sample.journal,
       year: sample.year,
       doi: sample.doi,
+      external_paper_id: sample.external_paper_id,
+      open_access_pdf_url: sample.open_access_pdf_url,
       battery_snapshot: sample.battery_snapshot,
     };
     detailStore.set(resultId, {
@@ -191,7 +200,6 @@ export async function mockSearchPapers(request: SearchRequest): Promise<SearchRe
       result_summary: sample.result_summary,
       abstract: sample.abstract,
       keyword,
-      open_access_pdf_url: sample.open_access_pdf_url,
       deep_analysis: null,
     });
     return card;

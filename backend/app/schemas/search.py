@@ -9,22 +9,28 @@ NoticeLevel = Literal["info", "warning"]
 
 
 class SearchRequest(BaseModel):
-    """Structured search input: a required material/chemistry term plus
-    two optional refinements, combined server-side into the single
-    keyword string the search pipeline expects."""
+    """Structured search input: a material/chemistry term and two optional
+    refinements, combined server-side into the single keyword string the
+    search pipeline expects. At least one of `material` or
+    `additive_or_solvent` is required - searching by additive/solvent alone
+    (e.g. "FEC") is supported, in which case search_pipeline.py's
+    additive-only mode narrows toward the electrolyte-additive usage
+    context specifically (a bare compound name is otherwise ambiguous -
+    the same molecule also turns up in papers using it as a coating agent,
+    a binder, etc.)."""
 
-    material: str = Field(min_length=1, max_length=200)
+    material: str = Field(default="", max_length=200)
     performance: str = Field(default="", max_length=200)
     additive_or_solvent: str = Field(default="", max_length=200)
     sort_by: SortBy = "relevance"
 
     @model_validator(mode="after")
-    def _strip_and_require_material(self) -> "SearchRequest":
+    def _strip_and_require_material_or_additive(self) -> "SearchRequest":
         self.material = self.material.strip()
         self.performance = self.performance.strip()
         self.additive_or_solvent = self.additive_or_solvent.strip()
-        if not self.material:
-            raise ValueError("소재를 입력해주세요.")
+        if not self.material and not self.additive_or_solvent:
+            raise ValueError("소재 또는 첨가제/용매 중 하나는 입력해주세요.")
         return self
 
 

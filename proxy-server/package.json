@@ -1,0 +1,10 @@
+{
+  "name": "blip-gemini-proxy",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Loopback Gemini API proxy - see README.md and index.mjs for why this exists.",
+  "scripts": {
+    "start": "node index.mjs"
+  }
+}

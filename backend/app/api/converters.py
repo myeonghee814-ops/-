@@ -14,6 +14,8 @@ def to_paper_card(result: SearchResult) -> PaperCard:
         journal=paper.journal,
         year=paper.year,
         doi=paper.doi,
+        external_paper_id=paper.external_paper_id,
+        open_access_pdf_url=paper.open_access_pdf_url,
         battery_snapshot=BatterySnapshot(
             cathode=paper.cathode,
             anode=paper.anode,
@@ -45,6 +47,5 @@ def to_paper_detail(result: SearchResult) -> PaperDetail:
         result_summary=paper.result_summary,
         abstract=paper.abstract,
         keyword=result.search_query.keyword,
-        open_access_pdf_url=paper.open_access_pdf_url,
         deep_analysis=deep_analysis,
     )

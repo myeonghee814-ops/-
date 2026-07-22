@@ -1,0 +1,44 @@
+@import "tailwindcss";
+
+/* Ported from battery-paper-summarizer/src/index.css. Only the @theme
+   tokens (needed so Tailwind generates bg-card/text-subtext/etc. utility
+   classes for the ported components) and .scrollbar-thin are kept - the
+   original file's `body`/`html`/`#root` rules were dropped because they'd
+   apply globally (not just on the "논문 요약" tab) and fight with BLIP's
+   own global.css, which already sets body margin/background/color/font. */
+@theme {
+  /* Design tokens per spec — keep this palette minimal, no rainbow of section colors. */
+  --color-bg: #f8fafc;
+  --color-card: #ffffff;
+  --color-primary: #2563eb;
+  --color-primary-hover: #1d4ed8;
+  --color-border: #e5e7eb;
+  --color-text: #111827;
+  --color-subtext: #6b7280;
+
+  --radius-card: 16px;
+
+  --font-sans:
+    "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+
+  /* Custom breakpoints matching the requested responsive check list. */
+  --breakpoint-md: 768px;
+  --breakpoint-lg: 1024px;
+  --breakpoint-xl: 1280px;
+  --breakpoint-2xl: 1440px;
+  --breakpoint-3xl: 1600px;
+  --breakpoint-4xl: 1920px;
+}
+
+/* Thin, unobtrusive scrollbar for the sidebar/scroll areas — matches the minimal aesthetic. */
+.scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border) transparent;
+}
+.scrollbar-thin::-webkit-scrollbar {
+  width: 6px;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 999px;
+}

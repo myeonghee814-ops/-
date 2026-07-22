@@ -1,5 +1,5 @@
 """Local (non-AI) relevance re-ranking, used as the fallback when Gemini's
-own `ai_service.rerank_candidates` is unavailable (429/503/timeout). Before
+own `ai_service.rerank_and_extract_candidates` is unavailable (429/503/timeout). Before
 this existed, a degraded search fell back to Semantic Scholar's own order
 verbatim - this module gives that fallback an actual relevance signal
 instead, via BM25 (Okapi BM25, k1=1.5/b=0.75 - standard defaults), computed
@@ -214,7 +214,7 @@ def rerank_locally(
 ) -> list[tuple[Candidate, float, str]]:
     """BM25-based relevance scoring over each candidate's title+abstract
     against the (expanded) query terms - a drop-in substitute for
-    `ai_service.rerank_candidates` when Gemini is unavailable. Returns
+    `ai_service.rerank_and_extract_candidates` when Gemini is unavailable. Returns
     (candidate, relevance_score, why_selected) tuples sorted best-first,
     same shape as the Gemini path.
 

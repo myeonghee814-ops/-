@@ -46,14 +46,20 @@ export default function SearchBar({ initialValue, loading = false, onSubmit }: S
   }, [initialValue]);
 
   const trimmedMaterial = material.trim();
-  const canSubmit = !loading && trimmedMaterial.length > 0;
+  const trimmedAdditive = additiveOrSolvent.trim();
+  // At least one of material/additive is required - searching by additive
+  // alone (e.g. "FEC") is supported, in which case search_pipeline.py's
+  // additive-only mode narrows toward the electrolyte-additive usage
+  // context specifically (see backend schemas/search.py for the matching
+  // server-side rule).
+  const canSubmit = !loading && (trimmedMaterial.length > 0 || trimmedAdditive.length > 0);
 
   function submit() {
     if (!canSubmit) return;
     onSubmit({
       material: trimmedMaterial,
       performance: performance.trim(),
-      additive_or_solvent: additiveOrSolvent.trim(),
+      additive_or_solvent: trimmedAdditive,
       sort_by: sortBy,
     });
   }
@@ -75,7 +81,7 @@ export default function SearchBar({ initialValue, loading = false, onSubmit }: S
     <form className="search-form" onSubmit={handleSubmit}>
       <div className="search-field">
         <label className="search-field-label" htmlFor="search-material">
-          소재 <span className="search-field-required">필수</span>
+          소재
         </label>
         <input
           id="search-material"
@@ -100,6 +106,10 @@ export default function SearchBar({ initialValue, loading = false, onSubmit }: S
             </button>
           ))}
         </div>
+        <p className="search-field-hint">
+          소재를 비우고 아래 첨가제/용매만 입력해서 검색할 수도 있습니다 (예: "FEC"만 입력).
+          둘 다 비어있으면 검색할 수 없습니다.
+        </p>
       </div>
 
       <div className="search-field">

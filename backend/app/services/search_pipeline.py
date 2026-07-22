@@ -2,9 +2,17 @@
 
 3-field form (material/performance/additive-or-solvent) -> additive/solvent
 CATEGORY expansion (e.g. "불소계" -> LiFSI/FEC/LiPF6) -> combined keyword ->
-AI query expansion -> Semantic Scholar search -> AI re-ranking (Korean
-reasoning) -> battery metadata extraction (Korean, batched) -> persisted
-SearchQuery/SearchResult/Paper rows.
+AI query expansion -> Semantic Scholar search -> a single combined AI call
+that both re-ranks candidates (Korean reasoning) and extracts battery
+metadata for them (Korean) -> persisted SearchQuery/SearchResult/Paper rows.
+
+Re-ranking and battery-metadata extraction are deliberately ONE Gemini call
+(`ai_service.rerank_and_extract_candidates`), not two - Gemini's free tier
+has a tight requests-per-minute quota, and a single search making 3 calls
+(query expansion + re-ranking + extraction) instead of 2 was routinely
+enough to trip it. This also means the two stages now succeed or degrade
+together: there is no longer a "re-ranking failed but extraction still ran"
+or vice versa in-between state.
 
 The whole pipeline is bounded by _SEARCH_TIME_BUDGET_SECONDS: every
 Gemini-calling phase is awaited with whatever time remains in the budget,
@@ -20,22 +28,32 @@ request. Three stages have a non-Gemini fallback instead of just giving up:
   Scholar's English-only index. Any Korean word the dictionary has no
   entry for is kept as a literal token (never silently dropped) and
   logged, so TERM_MAP gaps are discoverable from real traffic.
-- re-ranking falls back to `local_reranker`'s BM25 scoring (title+abstract
-  vs the expanded query terms) instead of just handing back Semantic
-  Scholar's own order - `_apply_relevance_safety_filter`'s lexical-overlap
-  demotion still runs on top as an independent second safety net, in case
-  BM25 itself misbehaves.
-All three fallback stages log a distinct "falling back to..." line on entry
-- grepping for that text over time is a proxy for how often Gemini itself
-is failing (quota, overload, or the search time budget).
-Battery metadata extraction still falls back to plain "정보 없음"
-placeholders - there is no non-AI substitute for reading an abstract. Its
-prompt is deliberately light (cathode/anode/electrolyte/voltage_window/
-cell_type, experimental_conditions, and one merged result_summary instead
-of four separate narrative fields) so each call is faster and less likely
-to be the one that runs into a timeout or 503 in the first place.
+- re-ranking (+ extraction) falls back to `local_reranker`'s BM25 scoring
+  (title+abstract vs the expanded query terms) instead of just handing back
+  Semantic Scholar's own order - `_apply_relevance_safety_filter`'s
+  lexical-overlap demotion still runs on top as an independent second
+  safety net, in case BM25 itself misbehaves. Battery metadata extraction
+  has no equivalent non-AI substitute (there is no local way to read an
+  abstract), so when this stage degrades, not-yet-cached papers simply keep
+  their "정보 없음"/empty placeholder fields instead of getting a second,
+  separate Gemini attempt right after the first one just failed.
+All fallback stages log a distinct "falling back to..." line on entry -
+grepping for that text over time is a proxy for how often Gemini itself is
+failing (quota, overload, or the search time budget).
 Semantic Scholar's own call is not budget-wrapped - without it there are no
 results to return at all, and it already has its own bounded retry.
+
+Additive-only mode (material field empty, additive_or_solvent given): the
+bare compound name alone is chemically ambiguous - the same molecule shows
+up in papers using it as an electrolyte additive/solvent AND in papers
+using it for something unrelated (a coating agent, a binder). Two things
+narrow toward the electrolyte-additive context specifically in this case
+only: query expansion gets an extra Korean instruction
+(`_ADDITIVE_ONLY_QUERY_FOCUS_HINT`), and re-ranking is post-processed
+(`_adjust_scores_for_additive_context`) using the same call's own
+extracted `electrolyte` field - mentioned there -> boosted, not mentioned
+-> demoted. Both are skipped whenever a material term is also given, since
+that term already anchors the search to battery chemistry on its own.
 """
 
 import asyncio
@@ -108,6 +126,25 @@ _BOOLEAN_SYNTAX_RE = re.compile(r"[\"'“”()]|\b(?:AND|OR)\b", re.IGNORECASE)
 # the candidate pool the way another *specific* term would (see the
 # material-only retry below for why piling on specific terms can backfire).
 _BATTERY_CONTEXT_SUFFIX = "lithium-ion battery electrolyte"
+
+# When the user searches by additive/solvent alone (material field left
+# empty), the bare compound name is chemically ambiguous - the same
+# molecule (e.g. FEC) shows up both in papers using it as an electrolyte
+# additive/solvent AND in papers using it for something else entirely (a
+# cathode coating agent, a binder, a separator surface treatment). With no
+# material term to anchor the search to battery chemistry, that other
+# context bleeds into the results. Both _ADDITIVE_ONLY_QUERY_FOCUS_HINT
+# (query expansion) and _adjust_scores_for_additive_context (re-ranking
+# post-processing, below) narrow toward the electrolyte-additive context
+# specifically. Neither runs when a material is also given - the material
+# term already does that anchoring on its own.
+_ADDITIVE_ONLY_QUERY_FOCUS_HINT = (
+    "이 물질이 전해액 첨가제 또는 용매로 사용된 논문 위주로 검색어를 확장해주세요. "
+    "코팅제, 바인더, 분리막 표면처리 등 전해액과 무관한 다른 용도로 쓰인 논문의 "
+    "우선순위가 낮아지도록 검색어를 구성하세요."
+)
+_ADDITIVE_CONTEXT_SCORE_BOOST = 15.0
+_ADDITIVE_CONTEXT_SCORE_PENALTY = 15.0
 
 
 def _api_search_query(english_query: str) -> str:
@@ -192,6 +229,40 @@ def _apply_relevance_safety_filter(
     return overlapping + non_overlapping + off_domain
 
 
+def _adjust_scores_for_additive_context(
+    scored: list[tuple["semantic_scholar_service.Candidate", float, str, dict]],
+    additive_terms: list[str],
+) -> list[tuple["semantic_scholar_service.Candidate", float, str, dict]]:
+    """Additive-only-mode post-processing, run on the output of
+    `ai_service.rerank_and_extract_candidates`: boosts candidates whose
+    extracted `electrolyte` field actually mentions the searched-for
+    compound, and demotes candidates whose extracted `electrolyte` field
+    does not. A paper that uses the same compound as a coating agent/
+    binder/etc. still gets ranked and extracted normally by Gemini - its
+    `electrolyte` field just won't mention the compound, which is exactly
+    the signal that distinguishes "used in the electrolyte" from "used for
+    something else". Re-sorts by the adjusted score, best-first.
+
+    No-op (returns `scored` unchanged) if `additive_terms` is empty -
+    callers only pass real terms in additive-only mode."""
+
+    lowered_terms = [t.lower() for t in additive_terms if t.strip()]
+    if not lowered_terms:
+        return scored
+
+    adjusted = []
+    for candidate, score, why, info in scored:
+        electrolyte_text = str(info.get("electrolyte", "")).lower()
+        if any(term in electrolyte_text for term in lowered_terms):
+            new_score = min(100.0, score + _ADDITIVE_CONTEXT_SCORE_BOOST)
+        else:
+            new_score = max(0.0, score - _ADDITIVE_CONTEXT_SCORE_PENALTY)
+        adjusted.append((candidate, new_score, why, info))
+
+    adjusted.sort(key=lambda t: t[1], reverse=True)
+    return adjusted
+
+
 def _sort_key(
     item: tuple["semantic_scholar_service.Candidate", float, str], sort_by: str
 ) -> tuple[float, float]:
@@ -241,77 +312,34 @@ def _apply_extraction(paper: Paper, analysis: dict) -> None:
     paper.extracted_at = datetime.now(timezone.utc)
 
 
-async def _extract_papers_individually(
-    papers: list[Paper], gemini_api_key: str | None, deadline: float
+def _apply_extraction_from_rankings(
+    papers: list[Paper],
+    top: list[tuple["semantic_scholar_service.Candidate", float, str]],
+    battery_info_by_paper_id: dict[str, dict],
 ) -> bool:
-    """Fallback used when the batch extraction call itself fails - the
-    same one-call-per-paper behavior the pipeline used before batching.
-    Returns True if any paper was left without extraction (a Gemini
-    failure, or the time budget running out mid-loop)."""
+    """Applies the battery_info bundled with each ranked candidate (from
+    `ai_service.rerank_and_extract_candidates`) to its Paper row. Papers
+    whose extraction already succeeded on a previous search (`is_extracted`)
+    are left untouched and never re-sent to Gemini. `battery_info_by_paper_id`
+    is empty whenever re-ranking degraded to the local BM25 fallback (no
+    Gemini call happened at all, so there is no extraction to apply) or a
+    given candidate's index was missing from Gemini's response (a rare
+    JSON-shape slip, not a call failure).
 
-    degraded = False
-    for paper in papers:
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            return True
-        try:
-            analysis = await asyncio.wait_for(
-                ai_service.extract_battery_analysis(paper.title, paper.abstract, gemini_api_key),
-                timeout=remaining,
-            )
-        except (RuntimeError, TimeoutError) as exc:
-            if isinstance(exc, TimeoutError):
-                logger.warning(
-                    "Individual extraction for paper %r aborted: %.1fs search time budget exhausted",
-                    paper.title,
-                    remaining,
-                )
-            degraded = True
-            continue
-        _apply_extraction(paper, analysis)
-    return degraded
-
-
-async def _extract_papers(
-    papers: list[Paper], gemini_api_key: str | None, deadline: float
-) -> bool:
-    """Fills in battery snapshot/analysis for every not-yet-extracted
-    paper, batched into a single Gemini call when possible; falls back to
-    one call per paper only if that batch call itself fails. Papers whose
-    extraction already succeeded on a previous search (`is_extracted`) are
-    reused as-is and never sent to Gemini again.
-
-    Returns True if any paper was left without extraction - `extracted_at`
-    is deliberately left unset for those so a later request retries them
-    instead of caching the gap forever.
+    Returns True if any not-yet-extracted paper was left without
+    extraction - `extracted_at` is deliberately left unset for those so a
+    later request retries them instead of caching the gap forever.
     """
 
-    needs = [p for p in papers if not p.is_extracted]
-    if not needs:
-        return False
-
-    remaining = deadline - time.monotonic()
-    if remaining <= 0:
-        return True
-
-    try:
-        analyses = await asyncio.wait_for(
-            ai_service.extract_battery_analysis_batch(
-                [(p.title, p.abstract) for p in needs], gemini_api_key
-            ),
-            timeout=remaining,
-        )
-    except (RuntimeError, TimeoutError) as exc:
-        if isinstance(exc, TimeoutError):
-            logger.warning("Batch extraction aborted: %.1fs search time budget exhausted", remaining)
-        return await _extract_papers_individually(needs, gemini_api_key, deadline)
-
     degraded = False
-    for i, paper in enumerate(needs):
-        if i in analyses:
-            _apply_extraction(paper, analyses[i])
-        else:
+    for paper, (candidate, _, _) in zip(papers, top):
+        if paper.is_extracted:
+            continue
+        battery_info = battery_info_by_paper_id.get(candidate.paper_id)
+        if battery_info is None:
             degraded = True
+            continue
+        _apply_extraction(paper, battery_info)
     return degraded
 
 
@@ -431,6 +459,13 @@ async def run_search(
     ai_degraded = False
     deadline = time.monotonic() + _SEARCH_TIME_BUDGET_SECONDS
 
+    # No material term means nothing anchors the search to battery
+    # chemistry - the bare additive/solvent name alone is ambiguous (see
+    # _ADDITIVE_ONLY_QUERY_FOCUS_HINT above). Only material emptiness (not
+    # `performance`) gates this - `performance` narrows the topic further
+    # but doesn't resolve the same-compound-different-context ambiguity.
+    additive_only_mode = not material.strip() and bool(additive_or_solvent.strip())
+
     expanded_additive, additive_notice, additive_notice_level, additive_degraded = (
         await _expand_additive_category(additive_or_solvent, gemini_api_key, deadline)
     )
@@ -445,7 +480,12 @@ async def run_search(
     else:
         try:
             english_query, expanded_terms = await asyncio.wait_for(
-                ai_service.expand_search_query(keyword, gemini_api_key), timeout=remaining
+                ai_service.expand_search_query(
+                    keyword,
+                    gemini_api_key,
+                    focus_hint=_ADDITIVE_ONLY_QUERY_FOCUS_HINT if additive_only_mode else None,
+                ),
+                timeout=remaining,
             )
         except (RuntimeError, TimeoutError) as exc:
             if isinstance(exc, TimeoutError):
@@ -486,6 +526,7 @@ async def run_search(
 
     remaining = deadline - time.monotonic()
     rerank_degraded = False
+    battery_info_by_paper_id: dict[str, dict] = {}
     if remaining <= 0:
         logger.warning("Re-ranking falling back to local BM25 (search time budget already exhausted)")
         ranked = local_reranker.rerank_locally(english_query, expanded_terms, candidates)
@@ -493,9 +534,14 @@ async def run_search(
         rerank_degraded = True
     else:
         try:
-            ranked = await asyncio.wait_for(
-                ai_service.rerank_candidates(keyword, candidates, gemini_api_key), timeout=remaining
+            scored = await asyncio.wait_for(
+                ai_service.rerank_and_extract_candidates(keyword, candidates, gemini_api_key),
+                timeout=remaining,
             )
+            if additive_only_mode:
+                scored = _adjust_scores_for_additive_context(scored, expanded_additive.split())
+            ranked = [(candidate, score, why) for candidate, score, why, _ in scored]
+            battery_info_by_paper_id = {candidate.paper_id: info for candidate, _, _, info in scored}
         except (RuntimeError, TimeoutError) as exc:
             if isinstance(exc, TimeoutError):
                 logger.warning("Re-ranking aborted: %.1fs search time budget exhausted", remaining)
@@ -543,7 +589,7 @@ async def run_search(
     db.flush()
 
     papers = [_get_or_create_paper(db, candidate) for candidate, _, _ in top]
-    extraction_degraded = await _extract_papers(papers, gemini_api_key, deadline)
+    extraction_degraded = _apply_extraction_from_rankings(papers, top, battery_info_by_paper_id)
     ai_degraded = ai_degraded or extraction_degraded
 
     for rank, ((_, score, why_selected), paper) in enumerate(zip(top, papers), start=1):
@@ -576,8 +622,9 @@ async def run_deep_analysis(db: Session, paper: Paper, gemini_api_key: str | Non
     pdf_extract.py), and asks Gemini for experiment-level detail an abstract
     alone usually can't give (exact electrolyte compositions, voltage
     window, cell type). Result is cached on the Paper row (keyed by
-    external_paper_id, same as extract_battery_analysis) so revisiting the
-    same paper from a later search never re-downloads or re-analyzes it.
+    external_paper_id, same as the search pipeline's own extraction) so
+    revisiting the same paper from a later search never re-downloads or
+    re-analyzes it.
     """
 
     extracted = await pdf_extract.download_and_extract(paper.open_access_pdf_url)

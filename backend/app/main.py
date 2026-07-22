@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 from app.api import routes_papers, routes_search
 from app.core.config import settings
 from app.db.database import init_db
+from app.services import ai_service
 
 logger = logging.getLogger(__name__)
 
@@ -19,12 +20,14 @@ logger = logging.getLogger(__name__)
 # configures only the "app" logger namespace - not the root logger - so
 # uvicorn's own access/error logs (which already have their own handlers
 # and would otherwise double-print if routed through root too) are
-# untouched.
+# untouched. Timestamps (with milliseconds) are included so log lines can
+# be timed against each other - e.g. how many seconds a Gemini call was
+# actually in flight before it timed out.
 _app_logger = logging.getLogger("app")
 _app_logger.setLevel(logging.INFO)
 if not _app_logger.handlers:
     _handler = logging.StreamHandler()
-    _handler.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
+    _handler.setFormatter(logging.Formatter("%(asctime)s.%(msecs)03d %(levelname)s: %(message)s"))
     _app_logger.addHandler(_handler)
     _app_logger.propagate = False
 
@@ -32,6 +35,19 @@ if not _app_logger.handlers:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    # Diagnostic: confirm the values actually loaded into the running
+    # process, not just what's on disk - .env is only read once at process
+    # start, so a stale/un-restarted process would otherwise silently keep
+    # serving the old numbers.
+    logger.info(
+        "Active config: candidate_count=%s top_n_results=%s gemini_model=%s "
+        "REQUEST_TIMEOUT_SECONDS=%s MAX_TIMEOUT_RETRIES=%s",
+        settings.candidate_count,
+        settings.top_n_results,
+        settings.gemini_model,
+        ai_service._REQUEST_TIMEOUT_SECONDS,
+        ai_service._MAX_TIMEOUT_RETRIES,
+    )
     yield
 
 
@@ -53,7 +69,10 @@ app.include_router(routes_papers.router)
 
 @app.exception_handler(RequestValidationError)
 async def validation_error_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
-    return JSONResponse(status_code=422, content={"detail": "입력값을 확인해주세요. (소재는 필수 입력 항목입니다.)"})
+    return JSONResponse(
+        status_code=422,
+        content={"detail": "입력값을 확인해주세요. (소재 또는 첨가제/용매 중 하나는 입력해야 합니다.)"},
+    )
 
 
 @app.exception_handler(Exception)

@@ -16,6 +16,8 @@ export interface PaperCard {
   journal: string;
   year: number | null;
   doi: string;
+  external_paper_id: string;
+  open_access_pdf_url: string;
   battery_snapshot: BatterySnapshot;
 }
 
@@ -33,7 +35,6 @@ export interface PaperDetail extends PaperCard {
   result_summary: string;
   abstract: string;
   keyword: string;
-  open_access_pdf_url: string;
   deep_analysis: DeepAnalysis | null;
 }
 
